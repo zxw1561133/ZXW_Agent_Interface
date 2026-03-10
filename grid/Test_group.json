@@ -1,0 +1,238 @@
+{
+    "groups": [
+        {
+            "members": {
+                "0": [
+                    "101"
+                ],
+                "1": [
+                    "102"
+                ],
+                "2": [
+                    "201",
+                    "209",
+                    "217"
+                ],
+                "3": [
+                    "202",
+                    "210",
+                    "218"
+                ],
+                "4": [
+                    "203",
+                    "211",
+                    "219"
+                ],
+                "5": [
+                    "204",
+                    "212",
+                    "220"
+                ],
+                "6": [
+                    "205",
+                    "213",
+                    "221"
+                ],
+                "7": [
+                    "206",
+                    "214",
+                    "222"
+                ],
+                "8": [
+                    "207",
+                    "215",
+                    "223"
+                ],
+                "9": [
+                    "208",
+                    "216",
+                    "224"
+                ]
+            },
+            "platformGridMaps": [
+                {
+                    "platformID": "201",
+                    "initGridIndex": 10,
+                    "task1GridIndex": 118,
+                    "task2GridIndex": 218,
+                    "task3GridIndex": 355
+                },
+                {
+                    "platformID": "202",
+                    "initGridIndex": 11,
+                    "task1GridIndex": 119,
+                    "task2GridIndex": 219,
+                    "task3GridIndex": 356
+                },
+                {
+                    "platformID": "203",
+                    "initGridIndex": 12,
+                    "task1GridIndex": 112,
+                    "task2GridIndex": 212,
+                    "task3GridIndex": 346
+                },
+                {
+                    "platformID": "204",
+                    "initGridIndex": 13,
+                    "task1GridIndex": 113,
+                    "task2GridIndex": 213,
+                    "task3GridIndex": 347
+                },
+                {
+                    "platformID": "205",
+                    "initGridIndex": 14,
+                    "task1GridIndex": 106,
+                    "task2GridIndex": 206,
+                    "task3GridIndex": 337
+                },
+                {
+                    "platformID": "206",
+                    "initGridIndex": 15,
+                    "task1GridIndex": 107,
+                    "task2GridIndex": 207,
+                    "task3GridIndex": 338
+                },
+                {
+                    "platformID": "207",
+                    "initGridIndex": 16,
+                    "task1GridIndex": 100,
+                    "task2GridIndex": 200,
+                    "task3GridIndex": 328
+                },
+                {
+                    "platformID": "208",
+                    "initGridIndex": 17,
+                    "task1GridIndex": 101,
+                    "task2GridIndex": 201,
+                    "task3GridIndex": 329
+                },
+                {
+                    "platformID": "209",
+                    "initGridIndex": 20,
+                    "task1GridIndex": 108,
+                    "task2GridIndex": 208,
+                    "task3GridIndex": 339
+                },
+                {
+                    "platformID": "210",
+                    "initGridIndex": 21,
+                    "task1GridIndex": 109,
+                    "task2GridIndex": 209,
+                    "task3GridIndex": 340
+                },
+                {
+                    "platformID": "211",
+                    "initGridIndex": 22,
+                    "task1GridIndex": 102,
+                    "task2GridIndex": 202,
+                    "task3GridIndex": 330
+                },
+                {
+                    "platformID": "212",
+                    "initGridIndex": 23,
+                    "task1GridIndex": 103,
+                    "task2GridIndex": 203,
+                    "task3GridIndex": 331
+                },
+                {
+                    "platformID": "213",
+                    "initGridIndex": 24,
+                    "task1GridIndex": 120,
+                    "task2GridIndex": 220,
+                    "task3GridIndex": 357
+                },
+                {
+                    "platformID": "214",
+                    "initGridIndex": 25,
+                    "task1GridIndex": 121,
+                    "task2GridIndex": 221,
+                    "task3GridIndex": 358
+                },
+                {
+                    "platformID": "215",
+                    "initGridIndex": 26,
+                    "task1GridIndex": 114,
+                    "task2GridIndex": 214,
+                    "task3GridIndex": 348
+                },
+                {
+                    "platformID": "216",
+                    "initGridIndex": 27,
+                    "task1GridIndex": 115,
+                    "task2GridIndex": 215,
+                    "task3GridIndex": 349
+                },
+                {
+                    "platformID": "217",
+                    "initGridIndex": 30,
+                    "task1GridIndex": 122,
+                    "task2GridIndex": 222,
+                    "task3GridIndex": 359
+                },
+                {
+                    "platformID": "218",
+                    "initGridIndex": 31,
+                    "task1GridIndex": 123,
+                    "task2GridIndex": 223,
+                    "task3GridIndex": 360
+                },
+                {
+                    "platformID": "219",
+                    "initGridIndex": 32,
+                    "task1GridIndex": 116,
+                    "task2GridIndex": 216,
+                    "task3GridIndex": 350
+                },
+                {
+                    "platformID": "220",
+                    "initGridIndex": 33,
+                    "task1GridIndex": 117,
+                    "task2GridIndex": 217,
+                    "task3GridIndex": 351
+                },
+                {
+                    "platformID": "221",
+                    "initGridIndex": 34,
+                    "task1GridIndex": 110,
+                    "task2GridIndex": 210,
+                    "task3GridIndex": 341
+                },
+                {
+                    "platformID": "222",
+                    "initGridIndex": 35,
+                    "task1GridIndex": 111,
+                    "task2GridIndex": 211,
+                    "task3GridIndex": 342
+                },
+                {
+                    "platformID": "223",
+                    "initGridIndex": 36,
+                    "task1GridIndex": 104,
+                    "task2GridIndex": 204,
+                    "task3GridIndex": 332
+                },
+                {
+                    "platformID": "224",
+                    "initGridIndex": 37,
+                    "task1GridIndex": 105,
+                    "task2GridIndex": 205,
+                    "task3GridIndex": 333
+                },
+                {
+                    "platformID": "101",
+                    "initGridIndex": 1010,
+                    "task1GridIndex": 1011,
+                    "task2GridIndex": 1012,
+                    "task3GridIndex": 1013
+                },
+                {
+                    "platformID": "102",
+                    "initGridIndex": 1020,
+                    "task1GridIndex": 1021,
+                    "task2GridIndex": 1022,
+                    "task3GridIndex": 1023
+                }
+            ]
+        }
+    ]
+}

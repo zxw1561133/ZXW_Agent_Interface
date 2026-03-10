@@ -1,0 +1,422 @@
+{
+    "initGrid": [
+        {
+            "altitude": 2420.0,
+            "gridIndex": 10,
+            "latitude": 34.46,
+            "length": 3.0,
+            "longitude": 108.02,
+            "width": 3.0
+        },
+        {
+            "altitude": 2420.0,
+            "gridIndex": 20,
+            "latitude": 34.45,
+            "length": 3.0,
+            "longitude": 108.11,
+            "width": 3.0
+        },
+        {
+            "altitude": 2420.0,
+            "gridIndex": 30,
+            "latitude": 34.46,
+            "length": 3.0,
+            "longitude": 108.2,
+            "width": 3.0
+        },
+        {
+            "altitude": 2180.0,
+            "gridIndex": 11,
+            "latitude": 34.46,
+            "length": 3.0,
+            "longitude": 108.02,
+            "width": 3.0
+        },
+        {
+            "altitude": 2180.0,
+            "gridIndex": 21,
+            "latitude": 34.45,
+            "length": 3.0,
+            "longitude": 108.11,
+            "width": 3.0
+        },
+        {
+            "altitude": 2180.0,
+            "gridIndex": 31,
+            "latitude": 34.46,
+            "length": 3.0,
+            "longitude": 108.2,
+            "width": 3.0
+        },
+        {
+            "altitude": 2120.0,
+            "gridIndex": 12,
+            "latitude": 34.46,
+            "length": 3.0,
+            "longitude": 108.02,
+            "width": 3.0
+        },
+        {
+            "altitude": 2120.0,
+            "gridIndex": 22,
+            "latitude": 34.45,
+            "length": 3.0,
+            "longitude": 108.11,
+            "width": 3.0
+        },
+        {
+            "altitude": 2120.0,
+            "gridIndex": 32,
+            "latitude": 34.46,
+            "length": 3.0,
+            "longitude": 108.2,
+            "width": 3.0
+        },
+        {
+            "altitude": 2240.0,
+            "gridIndex": 13,
+            "latitude": 34.46,
+            "length": 3.0,
+            "longitude": 108.02,
+            "width": 3.0
+        },
+        {
+            "altitude": 2240.0,
+            "gridIndex": 23,
+            "latitude": 34.45,
+            "length": 3.0,
+            "longitude": 108.11,
+            "width": 3.0
+        },
+        {
+            "altitude": 2240.0,
+            "gridIndex": 33,
+            "latitude": 34.46,
+            "length": 3.0,
+            "longitude": 108.2,
+            "width": 3.0
+        },
+        {
+            "altitude": 2060.0,
+            "gridIndex": 14,
+            "latitude": 34.46,
+            "length": 3.0,
+            "longitude": 108.02,
+            "width": 3.0
+        },
+        {
+            "altitude": 2060.0,
+            "gridIndex": 24,
+            "latitude": 34.45,
+            "length": 3.0,
+            "longitude": 108.11,
+            "width": 3.0
+        },
+        {
+            "altitude": 2060.0,
+            "gridIndex": 34,
+            "latitude": 34.46,
+            "length": 3.0,
+            "longitude": 108.2,
+            "width": 3.0
+        },
+        {
+            "altitude": 2360.0,
+            "gridIndex": 15,
+            "latitude": 34.46,
+            "length": 3.0,
+            "longitude": 108.02,
+            "width": 3.0
+        },
+        {
+            "altitude": 2360.0,
+            "gridIndex": 25,
+            "latitude": 34.45,
+            "length": 3.0,
+            "longitude": 108.11,
+            "width": 3.0
+        },
+        {
+            "altitude": 2360.0,
+            "gridIndex": 35,
+            "latitude": 34.46,
+            "length": 3.0,
+            "longitude": 108.2,
+            "width": 3.0
+        },
+        {
+            "altitude": 2300.0,
+            "gridIndex": 16,
+            "latitude": 34.46,
+            "length": 3.0,
+            "longitude": 108.02,
+            "width": 3.0
+        },
+        {
+            "altitude": 2300.0,
+            "gridIndex": 26,
+            "latitude": 34.45,
+            "length": 3.0,
+            "longitude": 108.11,
+            "width": 3.0
+        },
+        {
+            "altitude": 2300.0,
+            "gridIndex": 36,
+            "latitude": 34.46,
+            "length": 3.0,
+            "longitude": 108.2,
+            "width": 3.0
+        },
+        {
+            "altitude": 2000.0,
+            "gridIndex": 17,
+            "latitude": 34.46,
+            "length": 3.0,
+            "longitude": 108.02,
+            "width": 3.0
+        },
+        {
+            "altitude": 2000.0,
+            "gridIndex": 27,
+            "latitude": 34.45,
+            "length": 3.0,
+            "longitude": 108.11,
+            "width": 3.0
+        },
+        {
+            "altitude": 2000.0,
+            "gridIndex": 37,
+            "latitude": 34.46,
+            "length": 3.0,
+            "longitude": 108.2,
+            "width": 3.0
+        },
+        {
+            "altitude": 3900.0,
+            "gridIndex": 1010,
+            "latitude": 34.17,
+            "length": 6.0,
+            "longitude": 108.37,
+            "width": 6.0
+        },
+        {
+            "altitude": 3400.0,
+            "gridIndex": 1020,
+            "latitude": 34.17,
+            "length": 6.0,
+            "longitude": 108.47,
+            "width": 6.0
+        }
+    ],
+    "task1Grid": [
+        {
+            "altitude": 2300.0,
+            "gridIndex": 100,
+            "latitude": 34.974179187785374,
+            "length": 3.0,
+            "longitude": 108.4868731353545,
+            "width": 3.0
+        },
+        {
+            "altitude": 2000.0,
+            "gridIndex": 101,
+            "latitude": 34.974179187785374,
+            "length": 3.0,
+            "longitude": 108.51948183100667,
+            "width": 3.0
+        },
+        {
+            "altitude": 2120.0,
+            "gridIndex": 102,
+            "latitude": 34.974179187785374,
+            "length": 3.0,
+            "longitude": 108.55209052665884,
+            "width": 3.0
+        },
+        {
+            "altitude": 2240.0,
+            "gridIndex": 103,
+            "latitude": 34.974179187785374,
+            "length": 3.0,
+            "longitude": 108.58469922231102,
+            "width": 3.0
+        },
+        {
+            "altitude": 2300.0,
+            "gridIndex": 104,
+            "latitude": 34.974179187785374,
+            "length": 3.0,
+            "longitude": 108.61730791796319,
+            "width": 3.0
+        },
+        {
+            "altitude": 2000.0,
+            "gridIndex": 105,
+            "latitude": 34.974179187785374,
+            "length": 3.0,
+            "longitude": 108.64991661361536,
+            "width": 3.0
+        },
+        {
+            "altitude": 2060.0,
+            "gridIndex": 106,
+            "latitude": 34.94722972926179,
+            "length": 3.0,
+            "longitude": 108.4868731353545,
+            "width": 3.0
+        },
+        {
+            "altitude": 2360.0,
+            "gridIndex": 107,
+            "latitude": 34.94722972926179,
+            "length": 3.0,
+            "longitude": 108.51948183100667,
+            "width": 3.0
+        },
+        {
+            "altitude": 2420.0,
+            "gridIndex": 108,
+            "latitude": 34.94722972926179,
+            "length": 3.0,
+            "longitude": 108.55209052665884,
+            "width": 3.0
+        },
+        {
+            "altitude": 2180.0,
+            "gridIndex": 109,
+            "latitude": 34.94722972926179,
+            "length": 3.0,
+            "longitude": 108.58469922231102,
+            "width": 3.0
+        },
+        {
+            "altitude": 2060.0,
+            "gridIndex": 110,
+            "latitude": 34.94722972926179,
+            "length": 3.0,
+            "longitude": 108.61730791796319,
+            "width": 3.0
+        },
+        {
+            "altitude": 2360.0,
+            "gridIndex": 111,
+            "latitude": 34.94722972926179,
+            "length": 3.0,
+            "longitude": 108.64991661361536,
+            "width": 3.0
+        },
+        {
+            "altitude": 2120.0,
+            "gridIndex": 112,
+            "latitude": 34.9202802707382,
+            "length": 3.0,
+            "longitude": 108.4868731353545,
+            "width": 3.0
+        },
+        {
+            "altitude": 2240.0,
+            "gridIndex": 113,
+            "latitude": 34.9202802707382,
+            "length": 3.0,
+            "longitude": 108.51948183100667,
+            "width": 3.0
+        },
+        {
+            "altitude": 2300.0,
+            "gridIndex": 114,
+            "latitude": 34.9202802707382,
+            "length": 3.0,
+            "longitude": 108.55209052665884,
+            "width": 3.0
+        },
+        {
+            "altitude": 2000.0,
+            "gridIndex": 115,
+            "latitude": 34.9202802707382,
+            "length": 3.0,
+            "longitude": 108.58469922231102,
+            "width": 3.0
+        },
+        {
+            "altitude": 2120.0,
+            "gridIndex": 116,
+            "latitude": 34.9202802707382,
+            "length": 3.0,
+            "longitude": 108.61730791796319,
+            "width": 3.0
+        },
+        {
+            "altitude": 2240.0,
+            "gridIndex": 117,
+            "latitude": 34.9202802707382,
+            "length": 3.0,
+            "longitude": 108.64991661361536,
+            "width": 3.0
+        },
+        {
+            "altitude": 2420.0,
+            "gridIndex": 118,
+            "latitude": 34.89333081221462,
+            "length": 3.0,
+            "longitude": 108.4868731353545,
+            "width": 3.0
+        },
+        {
+            "altitude": 2180.0,
+            "gridIndex": 119,
+            "latitude": 34.89333081221462,
+            "length": 3.0,
+            "longitude": 108.51948183100667,
+            "width": 3.0
+        },
+        {
+            "altitude": 2060.0,
+            "gridIndex": 120,
+            "latitude": 34.89333081221462,
+            "length": 3.0,
+            "longitude": 108.55209052665884,
+            "width": 3.0
+        },
+        {
+            "altitude": 2360.0,
+            "gridIndex": 121,
+            "latitude": 34.89333081221462,
+            "length": 3.0,
+            "longitude": 108.58469922231102,
+            "width": 3.0
+        },
+        {
+            "altitude": 2420.0,
+            "gridIndex": 122,
+            "latitude": 34.89333081221462,
+            "length": 3.0,
+            "longitude": 108.61730791796319,
+            "width": 3.0
+        },
+        {
+            "altitude": 2180.0,
+            "gridIndex": 123,
+            "latitude": 34.89333081221462,
+            "length": 3.0,
+            "longitude": 108.64991661361536,
+            "width": 3.0
+        },
+        {
+            "altitude": 3900.0,
+            "gridIndex": 1011,
+            "latitude": 34.933755,
+            "length": 6.0,
+            "longitude": 108.544738,
+            "width": 6.0
+        },
+        {
+            "altitude": 3400.0,
+            "gridIndex": 1021,
+            "latitude": 34.933755,
+            "length": 6.0,
+            "longitude": 108.60995539130434,
+            "width": 6.0
+        }
+    ]
+}

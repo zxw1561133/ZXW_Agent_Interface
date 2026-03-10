@@ -1,0 +1,7 @@
+{
+  "_说明": "Linux 示例配置，复制为 config.json 并按本机路径修改 tiles_dir",
+  "tiles_dir": "/home/zxw/cursor/earth-3d-platform_v1.1/tiles",
+  "tile_service_url": "http://127.0.0.1:9001",
+  "tile_server_public": "http://127.0.0.1:9001",
+  "api_server": "http://127.0.0.1:9000"
+}

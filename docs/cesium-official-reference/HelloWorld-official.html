@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hello World - Cesium 官方最小示例</title>
+  <!-- 官方仓库相对路径：../Build/CesiumUnminified/Widgets/widgets.css -->
+  <style>
+    @import url(../Build/CesiumUnminified/Widgets/widgets.css);
+    html, body, #cesiumContainer {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+  </style>
+</head>
+<body>
+  <div id="cesiumContainer"></div>
+  <script>
+    // 官方写法：仅一行创建 Viewer，使用默认影像（需联网或配置 CESIUM_BASE_URL）
+    const viewer = new Cesium.Viewer("cesiumContainer");
+  </script>
+</body>
+</html>

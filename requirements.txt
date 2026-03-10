@@ -1,0 +1,4 @@
+# 3D Earth Platform - Python 依赖
+# 后端 backend/server.py 与 map/server.py 仅使用 Python 3 标准库，无需安装额外包。
+# 若后续增加依赖，在此处添加，例如：
+# requests>=2.28.0

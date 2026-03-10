@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Earth Platform</title>
+    <link rel="icon" href="images/icons/icon-globe.svg" type="image/svg+xml">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+    <!-- Cesium.js 本地部署，纯离线方案 -->
+    <script>window.CESIUM_BASE_URL = 'lib/Cesium/';</script>
+    <link rel="stylesheet" href="lib/Cesium/Widgets/widgets.css">
+    <script src="lib/Cesium/Cesium.js"></script>
+</head>
+<body>
+    <!-- 主容器 -->
+    <div id="app">
+        <!-- 顶部栏 -->
+        <header class="top-bar">
+            <div class="logo"><img src="images/icons/icon-globe.svg" alt="3D Earth Platform logo" class="logo-icon" width="24" height="24"> 3D Earth Platform</div>
+            <div class="status-bar">
+                <span id="zoomLevel">Zoom: 1x</span>
+                <span id="gridCount">Grids: 0</span>
+                <span id="connectionStatus" class="status-online" aria-live="polite"><span class="status-indicator-dot" aria-hidden="true"></span><span id="connectionStatusText">Online</span></span>
+            </div>
+        </header>
+
+        <!-- 主体区域 -->
+        <div class="main-container">
+            <!-- 左侧面板 -->
+            <aside class="left-panel" id="leftPanel">
+                <div class="panel-section">
+                    <h3><img src="images/icons/icon-map.svg" alt="" class="panel-section-icon" width="20" height="20" aria-hidden="true"> 地图控制</h3>
+                    <div class="control-group">
+                        <div class="tile-source-label-row">
+                            <label>瓦片源</label>
+                            <div id="tileSourceStatus" class="tile-source-status" aria-live="polite">
+                                <span id="tileSourceStatusText"></span>
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <label for="tileServerUrl" class="sr-only">瓦片服务地址</label>
+                            <input type="text" id="tileServerUrl" placeholder="瓦片服务地址（由配置加载）" aria-describedby="tileSourceStatusText">
+                            <button id="loadServerMapBtn" class="btn-primary">加载</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel-section" id="gridControlSection" data-disabled-hint="请先加载地图后再使用网格">
+                    <h3><img src="images/icons/icon-grid.svg" alt="" class="panel-section-icon" width="20" height="20" aria-hidden="true"> 网格控制</h3>
+                    <div class="control-group">
+                        <label for="taskSelect">选择任务</label>
+                        <select id="taskSelect" multiple aria-describedby="taskSelectHint">
+                            <option value="initGrid">初始网格</option>
+                            <option value="task1Grid">任务 1</option>
+                            <option value="task2Grid">任务 2</option>
+                            <option value="task3Grid">任务 3</option>
+                            <option value="groups">分组网格</option>
+                        </select>
+                        <span id="taskSelectHint" class="sr-only">可多选</span>
+                    </div>
+                    
+                    <div class="control-group button-row">
+                        <button id="loadGridBtn" class="btn-primary">加载选中网格</button>
+                        <button id="clearGridBtn" class="btn-secondary">清除网格</button>
+                    </div>
+                    
+                    <div class="control-group control-group-row">
+                        <span class="switch-item">
+                            <label for="gridVisibility">网格显示</label>
+                            <label class="switch">
+                                <input type="checkbox" id="gridVisibility" checked aria-label="切换网格显示">
+                                <span class="slider"></span>
+                            </label>
+                        </span>
+                        <span class="switch-item">
+                            <label for="editMode">网格编辑开关</label>
+                            <label class="switch">
+                                <input type="checkbox" id="editMode" checked aria-label="开启后，在地图上右击网格可弹出选中/取消等菜单" title="开启后，在地图上右击网格可弹出选中/取消等菜单">
+                                <span class="slider"></span>
+                            </label>
+                        </span>
+                    </div>
+                    
+                    <div class="control-group">
+                        <label for="gridOpacity">透明度 <span id="opacityValue" aria-live="polite">50%</span></label>
+                        <input type="range" id="gridOpacity" min="0" max="100" value="50" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" aria-valuetext="50%">
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <h3><img src="images/icons/icon-stats.svg" alt="" class="panel-section-icon" width="20" height="20" aria-hidden="true"> 统计信息</h3>
+                    <div class="stats">
+                        <div class="stat-item">
+                            <span class="stat-label">当前层级:</span>
+                            <span id="currentLevel">-</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">网格总数:</span>
+                            <span id="totalGrids">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">已选中:</span>
+                            <span id="selectedGrids">0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 折叠按钮 -->
+                <button class="panel-toggle left" id="leftPanelToggle" aria-label="折叠或展开左侧面板"><span aria-hidden="true">◀</span></button>
+            </aside>
+
+            <!-- 中央地图区 -->
+            <main class="map-container" id="mapContainer">
+                <!-- 3D 地球容器 -->
+                <div id="globe3d" class="globe-3d"></div>
+                
+                <!-- 网格 Canvas 覆盖层 -->
+                <canvas id="gridOverlay" class="grid-overlay"></canvas>
+                
+                <!-- 地图右侧：+-home 在图标容器上方，图标容器贴底（与经纬度分离，经纬度固定右下角） -->
+                <div class="tool-icons-right">
+                    <div class="zoom-buttons-row">
+                        <button id="resetViewBtn" class="zoom-btn reset" title="重置视角" aria-label="重置视角"><span aria-hidden="true">⌂</span></button>
+                        <button id="zoomOutBtn" class="zoom-btn" title="缩小" aria-label="缩小">−</button>
+                        <button id="zoomInBtn" class="zoom-btn" title="放大" aria-label="放大">+</button>
+                    </div>
+                    <div class="tool-icons-container">
+                        <button id="measureDistanceBtn" class="zoom-btn tool-btn" title="测量距离" aria-label="测量距离">
+                            <svg class="icon-tool" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V4l16 16M4 8h2M4 12h2M4 16h2M18 8h2M18 12h2M18 16h2"/></svg>
+                        </button>
+                        <button id="placeSearchBtn" class="zoom-btn tool-btn" title="搜索地点" aria-label="搜索地点">
+                            <svg class="icon-tool" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                        </button>
+                        <button id="drawPolylineBtn" class="zoom-btn tool-btn" title="折线段" aria-label="折线段">
+                            <svg class="icon-tool" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20L14 4"/><path d="M10 20L20 4"/><path d="M2 12h4"/><path d="M10 12h4"/><path d="M18 12h4"/></svg>
+                        </button>
+                        <button id="drawRectBtn" class="zoom-btn tool-btn" title="矩形框" aria-label="矩形框">
+                            <svg class="icon-tool" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="1"/></svg>
+                        </button>
+                        <button id="drawCircleBtn" class="zoom-btn tool-btn" title="圆" aria-label="圆">
+                            <svg class="icon-tool" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg>
+                        </button>
+                    </div>
+                </div>
+                <!-- 地图左侧：功能菜单（搜索/测量/绘制等激活后面板纵向排列） -->
+                <div class="tool-panels-left">
+                    <div class="tool-panels-container">
+                        <div id="searchFloatBox" class="tool-panel search-float-box" style="display: none;">
+                            <span class="tool-panel-title" id="searchFloatLabel">搜索</span>
+                            <input type="text" id="placeSearchInput" placeholder="经纬度 如 39.9, 116.4" aria-labelledby="searchFloatLabel" aria-describedby="placeSearchHint">
+                            <div class="search-float-actions">
+                                <button id="placeSearchDoBtn" class="btn-primary" type="button">搜索</button>
+                                <button id="clearSearchMarkerBtn" class="btn-secondary" type="button">清除标记</button>
+                            </div>
+                            <div id="placeSearchHint" class="tool-hint"></div>
+                        </div>
+                        <div id="measureFloatBox" class="tool-panel measure-float-box" style="display: none;">
+                            <span class="tool-panel-title">测量</span>
+                            <span id="measureResult" class="measure-result-text"></span>
+                            <button id="clearMeasureBtn" class="btn-secondary btn-sm" type="button">清除</button>
+                        </div>
+                        <div id="drawPolylineFloatBox" class="tool-panel draw-float-box" style="display: none;">
+                            <span class="tool-panel-title">折线段</span>
+                            <div id="drawPolylineHint" class="tool-hint draw-hint"></div>
+                            <button id="finishPolylineBtn" class="btn-secondary btn-sm" type="button">完成当前折线</button>
+                            <button id="clearPolylineBtn" class="btn-secondary btn-sm" type="button">清除折线</button>
+                        </div>
+                        <div id="drawRectFloatBox" class="tool-panel draw-float-box" style="display: none;">
+                            <span class="tool-panel-title">矩形框</span>
+                            <div id="drawRectHint" class="tool-hint draw-hint"></div>
+                            <button id="clearRectBtn" class="btn-secondary btn-sm" type="button">清除矩形</button>
+                        </div>
+                        <div id="drawCircleFloatBox" class="tool-panel draw-float-box" style="display: none;">
+                            <span class="tool-panel-title">圆</span>
+                            <div id="drawCircleHint" class="tool-hint draw-hint"></div>
+                            <button id="clearCircleBtn" class="btn-secondary btn-sm" type="button">清除圆</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 加载指示器 -->
+                <div id="loadingIndicator" class="loading-overlay" style="display: none;" role="status" aria-live="polite" aria-busy="true" aria-label="加载中">
+                    <div class="spinner" aria-hidden="true"></div>
+                    <span>加载中...</span>
+                </div>
+                <!-- 经纬度：独立于工具容器，固定右下角 -->
+                <div id="mouseCoords" class="mouse-coords" aria-live="polite"></div>
+            </main>
+
+            <!-- 右侧面板 - Agent 聊天 -->
+            <aside class="right-panel" id="rightPanel">
+                <div class="chat-header">
+                    <h3><img src="images/icons/icon-robot.svg" alt="" class="chat-header-icon" width="20" height="20" aria-hidden="true"> Agent Assistant</h3>
+                    <span class="status-dot online" aria-hidden="true"></span>
+                </div>
+                
+                <div class="chat-messages" id="chatMessages">
+                    <!-- 欢迎消息 -->
+                    <div class="message agent-message">
+                        <div class="message-avatar"><img src="images/icons/icon-robot.svg" alt="" class="message-avatar-icon" width="20" height="20" aria-hidden="true"></div>
+                        <div class="message-content">
+                            <div class="message-sender">Agent</div>
+                            <div class="message-text">你好！我是你的智能助手。我可以帮你：<br>• 导入网格数据<br>• 分析地图信息<br>• 执行任务规划<br><br>有什么我可以帮你的吗？</div>
+                            <div class="message-time">刚刚</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="chat-input-area">
+                    <label for="chatInput" class="sr-only">输入消息</label>
+                    <input type="text" id="chatInput" placeholder="输入消息..." maxlength="500" aria-label="输入消息">
+                    <button id="sendMessageBtn" class="send-btn" type="button" aria-label="发送消息"><svg class="send-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20" aria-hidden="true"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg></button>
+                </div>
+                
+                <!-- 折叠按钮 -->
+                <button class="panel-toggle right" id="rightPanelToggle" aria-label="折叠或展开右侧面板"><span aria-hidden="true">▶</span></button>
+            </aside>
+        </div>
+    </div>
+
+    <!-- 右键菜单：各任务阶段选中独立；重叠时先选“要操作的网格”，再显示操作项 + 查看详情 -->
+    <!-- 搜索标记右键菜单：仅一项「取消」 -->
+    <div id="markerContextMenu" class="context-menu marker-context-menu" style="display: none;" role="menu">
+        <div class="context-item" data-action="remove-marker" role="menuitem">取消</div>
+    </div>
+    <div id="contextMenu" class="context-menu" role="menu">
+        <div id="contextMenuPicker" class="context-menu-picker" style="display: none;">
+            <div class="context-menu-title">选择要操作的网格</div>
+            <div id="contextMenuPickerList"></div>
+        </div>
+        <div id="contextMenuActions" class="context-menu-actions">
+            <div class="context-item" data-action="select" role="menuitem">选中该网格</div>
+            <div class="context-item" data-action="selectAll" role="menuitem">选中该阶段全部网格</div>
+            <div class="context-item" data-action="deselect" role="menuitem">取消选中该网格</div>
+            <div class="context-item" data-action="deselectStage" role="menuitem">取消该阶段选中</div>
+            <div class="context-item" data-action="deselectAll" role="menuitem">取消所有选中</div>
+            <div class="context-divider"></div>
+            <div class="context-item" data-action="details" role="menuitem">查看详情</div>
+        </div>
+    </div>
+
+    <!-- 过滤由浏览器扩展触发的 iframe/sandbox 报错 -->
+    <script>
+(function () {
+    var _err = console.error;
+    console.error = function () {
+        var s = Array.prototype.map.call(arguments, function (a) { return (a && (a.toString && a.toString() || String(a))) || ''; }).join(' ');
+        if (/about:blank|sandboxed|allow-scripts|unlocker|Blocked script execution/i.test(s)) return;
+        _err.apply(console, arguments);
+    };
+})();
+    </script>
+    <script src="js/core/Config.js"></script>
+    <script src="js/core/EventBus.js"></script>
+    <script src="js/core/ApiService.js"></script>
+    <script src="js/globe/Globe3D.js"></script>
+    <script src="js/grid/GridSystem.js"></script>
+    <script src="js/chat/ChatAgent.js"></script>
+    <script src="js/ui/PanelManager.js"></script>
+    <script src="js/ui/ContextMenu.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

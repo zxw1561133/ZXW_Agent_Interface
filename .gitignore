@@ -1,0 +1,34 @@
+# 本地配置（含路径、密钥），不提交
+config.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+.env
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# 日志与临时
+*.log
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# IDE / 编辑器
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 可选：若 Cesium 通过 download 脚本拉取，可取消下面注释以不纳入版本库
+# frontend/lib/Cesium-1.110/

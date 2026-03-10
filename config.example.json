@@ -1,0 +1,6 @@
+{
+  "tiles_dir": "F:\\jk\\天津滨海\\cursor\\map_test\\tiles",
+  "tile_service_url": "http://127.0.0.1:9001",
+  "tile_server_public": "http://127.0.0.1:9001",
+  "api_server": "http://127.0.0.1:9000"
+}
