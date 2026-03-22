@@ -8,10 +8,28 @@ import socketserver
 import json
 import os
 import sys
+import threading
+import time
+import queue
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
+
+# SSE：网格保存后推送一次，前端据此刷新，无需轮询
+_grid_sse_queues = []
+_grid_sse_lock = threading.Lock()
+
+def _notify_grid_saved(payload):
+    """POST 保存成功后调用，向所有已连接的前端推送一次刷新事件。payload 为 dict，含 changedKeys/task3GridOnly/task3PreferenceOnly。"""
+    with _grid_sse_lock:
+        queues = list(_grid_sse_queues)
+    msg = json.dumps(payload, ensure_ascii=False)
+    for q in queues:
+        try:
+            q.put_nowait(msg)
+        except queue.Full:
+            pass
 
 # 配置（优先从 config.json 读取，与 map 服务、前端共用）
 PORT = 9000
@@ -37,6 +55,14 @@ def _load_config():
 
 _CONFIG = _load_config()
 TILE_SERVER_URL = _CONFIG.get('tile_service_url', 'http://127.0.0.1:9001')
+
+# 用于前端区分 task3 是「仅网格保存」还是「仅偏好保存」
+last_task3_grid_save_at = 0.0
+last_preference_save_at = 0.0
+
+# 任务区域确认流程：Agent POST 保存后 HTTP 连接阻塞等待，前端与本地后端交互确认/修改，用户确认后由 confirm 接口向等待中的 POST 连接返回数据
+_task_area_pending_lock = threading.Lock()
+_task_area_pending_handlers = []  # [(handler, event), ...]，confirm 时向这些 handler 发送 task_area 并 event.set()
 
 class APIHandler(http.server.SimpleHTTPRequestHandler):
     """处理 API 请求"""
@@ -118,6 +144,18 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_grid_list()
         elif path == '/api/grid/data':
             self.handle_grid_data(parse_qs(parsed.query))
+        elif path == '/api/grid/preference':
+            self.handle_grid_preference()
+        elif path == '/api/grid/group-members':
+            self.handle_grid_group_members()
+        elif path == '/api/grid/last-update':
+            self.handle_grid_last_update()
+        elif path == '/api/grid/events':
+            self.handle_grid_events_sse()
+        elif path == '/api/grid/channel':
+            self.handle_grid_channel()
+        elif path == '/api/grid/task-area':
+            self.handle_grid_task_area()
         elif path.rstrip('/').lower() == '/tiles':
             self.handle_tile_root()
         elif path.lower().startswith('/tiles/'):
@@ -149,9 +187,29 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self):
-        """处理 POST 请求 - 接收 Agent 发送的网格数据并保存（与 DA_Interface_wyj 一致）"""
+        """处理 POST 请求 - 网格保存 / 偏好保存（独立接口）"""
         parsed = urlparse(self.path)
         path = (parsed.path or '/').strip()
+
+        # 偏好保存接口：仅写 task3 文件中的 preferences，保留原有 task3Grid
+        if path == '/api/grid/preference/save':
+            self._handle_preference_save()
+            return
+        # 通道保存接口：Agent 写入 channel.json，前端收到 SSE 后显示立方体
+        if path == '/api/grid/channel/save':
+            self._handle_channel_save()
+            return
+        # 任务区域保存接口：Agent 写入 task_area.json，前端收到 SSE 后显示各任务区域矩形
+        if path == '/api/grid/task-area/save':
+            self._handle_task_area_save()
+            return
+        # 前端地图编辑保存：仅写文件并推送 SSE，不阻塞（避免与 Agent 阻塞式 save 共用同一接口导致前端 await 卡死）
+        if path == '/api/grid/task-area/save-ui':
+            self._handle_task_area_save_ui()
+            return
+        if path == '/api/grid/task-area/confirm':
+            self._handle_task_area_confirm()
+            return
         if path != '/api/grid/save':
             self.send_json({'error': 'Not Found'}, 404)
             return
@@ -177,6 +235,9 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
             filepath = GRID_DIR / filename
             with open(filepath, 'w', encoding='utf-8') as f:
                 json.dump(grid_data, f, ensure_ascii=False, indent=2)
+            global last_task3_grid_save_at
+            if task_type == 'task3':
+                last_task3_grid_save_at = time.time()
             self.send_json({
                 'status': 'success',
                 'message': f'网格数据已保存到 {filepath}',
@@ -184,13 +245,64 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
                 'dataCount': self._count_grid_cells(grid_data)
             })
             print(f"[保存] 网格数据已保存: {task_type} - 成功")
+            # 推送一次 SSE，前端据此刷新，无需轮询
+            _notify_grid_saved({
+                'changedKeys': [task_type],
+                'task3GridOnly': (task_type == 'task3'),
+                'task3PreferenceOnly': False
+            })
+        except json.JSONDecodeError as e:
+            self.send_json({'error': f'JSON解析错误: {str(e)}'}, 400)
+        except Exception as e:
+            self.send_json({'error': f'服务器错误: {str(e)}'}, 500)
+
+    def _handle_preference_save(self):
+        """保存网格偏好到 Test_grid_task3.json：保留 task3Grid，仅更新 preferences（格式与现有文件一致）"""
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            post_data = self.rfile.read(content_length)
+            request_data = json.loads(post_data.decode('utf-8'))
+            preferences = request_data.get('preferences')
+            if preferences is None:
+                preferences = request_data.get('data')
+            if preferences is None:
+                self.send_json({'error': '缺少 preferences 或 data 字段'}, 400)
+                return
+            if not isinstance(preferences, list):
+                self.send_json({'error': 'preferences 必须为数组（格式参考 Test_grid_task3.json）'}, 400)
+                return
+            filepath = GRID_DIR / 'Test_grid_task3.json'
+            task3_grid = []
+            if filepath.exists():
+                try:
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        existing = json.load(f)
+                    task3_grid = existing.get('task3Grid', [])
+                except Exception:
+                    pass
+            out = {'task3Grid': task3_grid, 'preferences': preferences}
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(out, f, ensure_ascii=False, indent=2)
+            global last_preference_save_at
+            last_preference_save_at = time.time()
+            self.send_json({
+                'status': 'success',
+                'message': f'偏好已保存到 {filepath}（task3Grid 已保留，preferences 已更新）',
+                'preferenceGroupCount': len(preferences),
+            })
+            print(f"[保存] 网格偏好已保存到 task3 文件 - 成功")
+            _notify_grid_saved({
+                'changedKeys': [],
+                'task3GridOnly': False,
+                'task3PreferenceOnly': True
+            })
         except json.JSONDecodeError as e:
             self.send_json({'error': f'JSON解析错误: {str(e)}'}, 400)
         except Exception as e:
             self.send_json({'error': f'服务器错误: {str(e)}'}, 500)
     
     def _count_grid_cells(self, grid_data):
-        """统计网格数据中的单元格数量（与 DA_Interface_wyj 一致）"""
+        """统计网格数据中的单元格数量"""
         count = 0
         if isinstance(grid_data, dict):
             for key, value in grid_data.items():
@@ -230,27 +342,35 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
         })
     
     def handle_grid_list(self):
-        """获取网格列表。与 DA_Interface 一致：仅返回 task1/task2/task3/group，initGrid 由前端从 task1 的 initGrid 键解析。"""
-        self.send_json(['task1', 'task2', 'task3', 'group'])
+        """获取网格列表。initGrid 仅作为获取键，数据从 task1 文件读；无单独初始化网格文件。"""
+        self.send_json(['initGrid', 'task1', 'task2', 'task3', 'group'])
     
     def handle_grid_data(self, params):
-        """获取网格数据。与 DA_Interface 一致：仅支持 task1/task2/task3/group，返回对应文件原始 JSON。"""
+        """获取网格数据。task=initGrid 时仍从 Test_grid_task1.json 读取并只返回 initGrid 键；无单独初始化网格文件。"""
         task = params.get('task', ['task1'])[0]
-        
-        # 与 DA_Interface 一致：只读 4 个文件，仅 task1/task2/task3/group
         file_map = {
             'task1': 'Test_grid_task1.json',
             'task2': 'Test_grid_task2.json',
             'task3': 'Test_grid_task3.json',
             'group': 'Test_group.json'
         }
-        
+        if task == 'initGrid':
+            filepath = GRID_DIR / file_map['task1']
+            try:
+                if filepath.exists():
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    self.send_json({'initGrid': data.get('initGrid', [])})
+                else:
+                    self.send_json(self.generate_mock_data('initGrid'))
+            except Exception as e:
+                self.send_json({'error': str(e)}, 500)
+            return
         filename = file_map.get(task)
         if not filename:
             self.send_json({'error': f'未知任务类型: {task}'}, 400)
             return
         filepath = GRID_DIR / filename
-        
         try:
             if filepath.exists():
                 with open(filepath, 'r', encoding='utf-8') as f:
@@ -260,12 +380,259 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_json(self.generate_mock_data(task))
         except Exception as e:
             self.send_json({'error': str(e)}, 500)
+
+    def handle_grid_preference(self):
+        """偏好网格独立接口：从 Test_grid_task3.json 读取并返回 task3Grid + preferences，不增加新文件。"""
+        filepath = GRID_DIR / 'Test_grid_task3.json'
+        try:
+            if filepath.exists():
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                self.send_json({
+                    'task3Grid': data.get('task3Grid', []),
+                    'preferences': data.get('preferences', [])
+                })
+            else:
+                self.send_json({'task3Grid': [], 'preferences': []})
+        except Exception as e:
+            self.send_json({'error': str(e)}, 500)
+
+    def handle_grid_group_members(self):
+        """分组信息（members）独立接口：从 Test_group.json 读取并返回 groups，不增加新文件。"""
+        filepath = GRID_DIR / 'Test_group.json'
+        try:
+            if filepath.exists():
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                self.send_json({'groups': data.get('groups', [])})
+            else:
+                self.send_json({'groups': []})
+        except Exception as e:
+            self.send_json({'error': str(e)}, 500)
+
+    def handle_grid_channel(self):
+        """通道数据：从 channel.json 读取并返回完整内容，供前端绘制立方体。"""
+        filepath = GRID_DIR / 'channel.json'
+        try:
+            if filepath.exists():
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                self.send_json(data)
+            else:
+                self.send_json({'channel': {'cubeList': []}})
+        except Exception as e:
+            self.send_json({'error': str(e)}, 500)
+
+    def _handle_channel_save(self):
+        """保存通道数据到 channel.json。Body: { "channel": { "cubeList": [ { center_jd, center_wd, center_gc, length, width, height }, ... ] } }。"""
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            post_data = self.rfile.read(content_length)
+            request_data = json.loads(post_data.decode('utf-8'))
+            channel = request_data.get('channel')
+            if channel is None:
+                self.send_json({'error': '缺少 channel 字段'}, 400)
+                return
+            if not isinstance(channel, dict):
+                self.send_json({'error': 'channel 必须为对象'}, 400)
+                return
+            cube_list = channel.get('cubeList', [])
+            if not isinstance(cube_list, list):
+                self.send_json({'error': 'channel.cubeList 必须为数组'}, 400)
+                return
+            filepath = GRID_DIR / 'channel.json'
+            GRID_DIR.mkdir(parents=True, exist_ok=True)
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump({'channel': channel}, f, ensure_ascii=False, indent=2)
+            self.send_json({
+                'status': 'success',
+                'message': f'通道数据已保存到 {filepath}',
+                'cubeCount': len(cube_list)
+            })
+            print(f"[保存] 通道数据已保存: {len(cube_list)} 个立方体")
+            _notify_grid_saved({
+                'changedKeys': ['channel'],
+                'task3GridOnly': False,
+                'task3PreferenceOnly': False
+            })
+        except json.JSONDecodeError as e:
+            self.send_json({'error': f'JSON解析错误: {str(e)}'}, 400)
+        except Exception as e:
+            self.send_json({'error': f'服务器错误: {str(e)}'}, 500)
+
+    def handle_grid_task_area(self):
+        """任务区域数据：从 task_area.json 读取并返回完整内容，供前端绘制各任务区域矩形。"""
+        filepath = GRID_DIR / 'task_area.json'
+        try:
+            if filepath.exists():
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                self.send_json(data)
+            else:
+                self.send_json({'task_area': {}})
+        except Exception as e:
+            self.send_json({'error': str(e)}, 500)
+
+    def _handle_task_area_save(self):
+        """保存任务区域数据到 task_area.json。HTTP 连接阻塞等待，直到前端用户确认后由 confirm 接口向本连接返回 task_area 数据。"""
+        global _task_area_pending_handlers
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            post_data = self.rfile.read(content_length)
+            request_data = json.loads(post_data.decode('utf-8'))
+            task_area = request_data.get('task_area')
+            if task_area is None:
+                self.send_json({'error': '缺少 task_area 字段'}, 400)
+                return
+            if not isinstance(task_area, dict):
+                self.send_json({'error': 'task_area 必须为对象'}, 400)
+                return
+            filepath = GRID_DIR / 'task_area.json'
+            GRID_DIR.mkdir(parents=True, exist_ok=True)
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump({'task_area': task_area}, f, ensure_ascii=False, indent=2)
+            print(f"[保存] 任务区域已保存: {len(task_area)} 个区域，等待用户确认（HTTP 阻塞）")
+            _notify_grid_saved({
+                'changedKeys': ['task_area'],
+                'task3GridOnly': False,
+                'task3PreferenceOnly': False
+            })
+            ev = threading.Event()
+            with _task_area_pending_lock:
+                _task_area_pending_handlers.append((self, ev))
+            if not ev.wait(timeout=600):
+                self.send_json({'error': 'confirmed_timeout', 'message': '等待用户确认超时（10分钟）'}, 408)
+            with _task_area_pending_lock:
+                _task_area_pending_handlers[:] = [(h, e) for h, e in _task_area_pending_handlers if h is not self]
+        except json.JSONDecodeError as e:
+            self.send_json({'error': f'JSON解析错误: {str(e)}'}, 400)
+        except Exception as e:
+            self.send_json({'error': f'服务器错误: {str(e)}'}, 500)
+
+    def _handle_task_area_save_ui(self):
+        """前端在地图上修改任务区域后保存：写 task_area.json 并推送 SSE，立即返回，不参与 Agent 阻塞等待。"""
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            post_data = self.rfile.read(content_length)
+            request_data = json.loads(post_data.decode('utf-8'))
+            task_area = request_data.get('task_area')
+            if task_area is None:
+                self.send_json({'error': '缺少 task_area 字段'}, 400)
+                return
+            if not isinstance(task_area, dict):
+                self.send_json({'error': 'task_area 必须为对象'}, 400)
+                return
+            filepath = GRID_DIR / 'task_area.json'
+            GRID_DIR.mkdir(parents=True, exist_ok=True)
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump({'task_area': task_area}, f, ensure_ascii=False, indent=2)
+            print(f"[保存] 任务区域已保存（前端 save-ui）: {len(task_area)} 个区域，不阻塞")
+            _notify_grid_saved({
+                'changedKeys': ['task_area'],
+                'task3GridOnly': False,
+                'task3PreferenceOnly': False
+            })
+            self.send_json({
+                'status': 'success',
+                'message': '任务区域已保存',
+                'areaCount': len(task_area)
+            })
+        except json.JSONDecodeError as e:
+            self.send_json({'error': f'JSON解析错误: {str(e)}'}, 400)
+        except Exception as e:
+            self.send_json({'error': f'服务器错误: {str(e)}'}, 500)
+
+    def _handle_task_area_confirm(self):
+        """用户在前端确认接收或已修改完毕时由前端调用。向所有等待中的 POST /task-area/save 连接返回当前 task_area 数据，解除阻塞。"""
+        global _task_area_pending_handlers
+        filepath = GRID_DIR / 'task_area.json'
+        try:
+            if filepath.exists():
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            else:
+                data = {'task_area': {}}
+        except Exception:
+            data = {'task_area': {}}
+        with _task_area_pending_lock:
+            pending = list(_task_area_pending_handlers)
+            _task_area_pending_handlers.clear()
+        for handler, ev in pending:
+            try:
+                handler.send_json(data)
+            except Exception as ex:
+                print(f"[确认] 向等待中的 Agent 返回数据时出错: {ex}")
+            try:
+                ev.set()
+            except Exception:
+                pass
+        print(f'[确认] 任务区域已确认，已向 {len(pending)} 个等待连接返回数据')
+        self.send_json({'status': 'success', 'message': '已确认，等待中的 Agent 已收到任务区域数据。'})
+
+    def handle_grid_events_sse(self):
+        """SSE 流：前端订阅后，仅在 POST 保存时推送一次刷新事件，其他时间不推送。"""
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/event-stream')
+        self.send_header('Cache-Control', 'no-cache')
+        self.send_header('Connection', 'keep-alive')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+        try:
+            self.wfile.flush()
+        except OSError:
+            return
+        q = queue.Queue()
+        with _grid_sse_lock:
+            _grid_sse_queues.append(q)
+        try:
+            while True:
+                try:
+                    msg = q.get(timeout=25)
+                except queue.Empty:
+                    msg = None
+                try:
+                    if msg is not None:
+                        self.wfile.write(('data: %s\n\n' % msg).encode('utf-8'))
+                    else:
+                        self.wfile.write(b': keepalive\n\n')
+                    self.wfile.flush()
+                except (OSError, BrokenPipeError):
+                    break
+                if msg is None:
+                    continue
+                # 收到一次推送后继续等待下一次（连接不关闭）
+        except (OSError, BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            with _grid_sse_lock:
+                if q in _grid_sse_queues:
+                    _grid_sse_queues.remove(q)
+
+    def handle_grid_last_update(self):
+        """返回各网格文件的最后修改时间及 task3 的网格/偏好分别由谁更新，供前端区分只刷新网格或只刷新偏好。"""
+        file_map = {
+            'task1': 'Test_grid_task1.json',
+            'task2': 'Test_grid_task2.json',
+            'task3': 'Test_grid_task3.json',
+            'group': 'Test_group.json'
+        }
+        out = {}
+        for key, filename in file_map.items():
+            filepath = GRID_DIR / filename
+            try:
+                out[key] = filepath.stat().st_mtime if filepath.exists() else 0
+            except OSError:
+                out[key] = 0
+        out['task3_grid_save_at'] = last_task3_grid_save_at
+        out['task3_preference_save_at'] = last_preference_save_at
+        self.send_json(out)
     
     def generate_mock_data(self, task):
         """生成模拟网格数据（仅 task1/task2/task3/group）"""
         # 不同任务在不同区域
         regions = {
             'task1': [(39.0, 117.0)],   # 天津附近
+            'initGrid': [(39.0, 117.0)],  # 与 task1 同源
             'task2': [(39.1, 117.1), (39.2, 117.2)],
             'task3': [(39.3, 117.3), (39.4, 117.4)],
             'group': [(39.2, 117.3)]
@@ -287,9 +654,11 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
                     })
                     grid_index += 1
         
-        # 与 DA_Interface 一致：task1 文件含 initGrid 与 task1Grid；task2/3 为 task2Grid/task3Grid；group 为 groups
+        # task1 文件含 initGrid 与 task1Grid；task2/3 为 task2Grid/task3Grid；group 为 groups；initGrid 单独键仍用 task1 区域数据
         if task == 'task1':
             return {'initGrid': grids, 'task1Grid': grids}
+        if task == 'initGrid':
+            return {'initGrid': grids}
         if task == 'task2':
             return {'task2Grid': grids}
         if task == 'task3':
@@ -355,7 +724,9 @@ def serve_api():
     # 确保 grid 目录存在
     GRID_DIR.mkdir(exist_ok=True)
     
-    with socketserver.TCPServer(("", PORT), APIHandler) as httpd:
+    class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+        allow_reuse_address = True
+    with ThreadedTCPServer(("", PORT), APIHandler) as httpd:
         print(f"[OK] API 服务器启动成功")
         api_url = _CONFIG.get('api_server', 'http://127.0.0.1:9000').rstrip('/')
         print(f"API 地址: {api_url} (来自 config.json)")
@@ -364,11 +735,29 @@ def serve_api():
         print(f"index.html: {'存在' if index_html.exists() else '不存在 -> 根路径会 404'}")
         print(f"网格目录: {GRID_DIR}")
         print()
-        print("API 端点:")
-        print(f"  GET  {api_url}/api/health")
-        print(f"  GET  {api_url}/api/grid/list")
-        print(f"  GET  {api_url}/api/grid/data?task=task1")
-        print(f"  POST {api_url}/api/grid/save - 保存网格数据（Agent 调用）")
+        print("API 端点（详见 docs/API.md）:")
+        print("  [系统]")
+        print(f"    GET  {api_url}/api/health           健康检查")
+        print(f"    GET  {api_url}/config.json         配置文件（瓦片/API 地址）")
+        print(f"    GET  {api_url}/api/config          配置（同上，备用）")
+        print(f"    GET  {api_url}/api/tile-proxy-test 瓦片代理测试")
+        print("  [网格]")
+        print(f"    GET  {api_url}/api/grid/list        任务类型列表 → ['initGrid','task1','task2','task3','group']")
+        print(f"    GET  {api_url}/api/grid/data?task= initGrid|task1|task2|task3|group，按 task 读对应 JSON")
+        print(f"    GET  {api_url}/api/grid/preference 偏好网格 → Test_grid_task3.json（task3Grid+preferences）")
+        print(f"    GET  {api_url}/api/grid/group-members 分组 members → Test_group.json（groups）")
+        print(f"    GET  {api_url}/api/grid/last-update 各网格文件最后修改时间（可选，兼容旧前端）")
+        print(f"    GET  {api_url}/api/grid/events       SSE 订阅，POST 保存后推送一次，前端据此刷新")
+        print(f"    POST {api_url}/api/grid/save            Body: {{ task, data }}，保存到对应 JSON（Agent 等）")
+        print(f"    POST {api_url}/api/grid/preference/save  Body: {{ preferences }}，仅更新 task3 的偏好（Agent 等）")
+        print(f"    GET  {api_url}/api/grid/channel         通道立方体数据（channel.json）")
+        print(f"    POST {api_url}/api/grid/channel/save    Body: {{ channel: {{ cubeList }} }}，保存通道（Agent 等）")
+        print(f"    GET  {api_url}/api/grid/task-area      任务区域数据（task_area.json）")
+        print(f"    POST {api_url}/api/grid/task-area/save     Body: {{ task_area }}，Agent 调用；HTTP 阻塞直到用户确认后返回数据")
+        print(f"    POST {api_url}/api/grid/task-area/save-ui  Body: {{ task_area }}，前端地图修改保存；立即返回，不阻塞")
+        print(f"    POST {api_url}/api/grid/task-area/confirm  前端用户确认后调用，向等待中的 Agent 返回数据")
+        print("  [瓦片]")
+        print(f"    GET  {api_url}/tiles/{{z}}/{{x}}/{{y}}.jpg  代理到瓦片服务（同源）")
         print()
         print("按 Ctrl+C 停止服务器")
         print("-" * 50)

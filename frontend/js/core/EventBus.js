@@ -17,7 +17,6 @@ class EventBus {
         }
         this.events[event].push(callback);
         
-        // 返回取消订阅函数
         return () => this.off(event, callback);
     }
     
@@ -61,5 +60,5 @@ class EventBus {
     }
 }
 
-// 创建全局事件总线实例
+// 全局 EventBus 实例
 const eventBus = new EventBus();

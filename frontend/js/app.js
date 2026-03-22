@@ -30,6 +30,16 @@ class App {
         this.drawCircleEntities = [];
         this.drawState = { currentPolyline: [], rectFirst: null, circleCenter: null };
         this._drawPolylinePreviewEntity = null;
+        // Agent 保存轮询：检测后端网格文件变更后自动刷新并提示
+        this._gridLastUpdate = null;
+        this._gridSavePollingId = null;
+        // 任务区域拖动：左键按住高亮任务区域拖动，松开后确认浮层
+        this._taskAreaDrag = null;
+        this._taskAreaConfirmOverlay = null;
+        /** 前端刚发送任务区域保存聊天消息的时间戳，SSE 刷新时若在 5 秒内则不再发重复消息，保证每条消息独立且不重复 */
+        this._lastTaskAreaChatSentAt = 0;
+        /** 任务区域确认流程：请求端下发后等待用户 接收/不接受或需要修改；若需要修改则等待 已修改完毕。{ choice: boolean, modificationDone: boolean } */
+        this._pendingTaskAreaConfirm = null;
         
         this.init();
     }
@@ -38,10 +48,10 @@ class App {
      * 初始化应用
      */
     async init() {
-        console.log('🚀 Initializing 3D Earth Platform...');
+        console.log('🚀 Initializing DA智能体系统...');
         
         try {
-            // 瓦片源地址栏：优先从配置文件 config.json 读取 tile_server_public，否则走 /api/config，最后才用代码默认值
+            // 瓦片源：优先 config.json 的 tile_server_public，其次 /api/config，否则使用代码默认值
             const apiBase = Config.SERVER.API_SERVER || '';
             let tileFromConfig = false;
             if (apiBase) {
@@ -56,7 +66,7 @@ class App {
                             tileFromConfig = true;
                         }
                     }
-                } catch (e) { /* 忽略 */ }
+                } catch (e) { /* 静默忽略配置读取异常 */ }
                 if (!tileFromConfig) {
                     try {
                         const res = await fetch(`${apiBase}/api/config`, { mode: 'cors' });
@@ -66,38 +76,32 @@ class App {
                             if (data.localTilesPath != null) Config.LOCAL_TILES_PATH = data.localTilesPath;
                             if (data.apiServer != null) Config.SERVER.API_SERVER = data.apiServer;
                         }
-                    } catch (e) { /* 离线或后端未启动时保留 Config.js 默认值 */ }
+                    } catch (e) { /* 离线或后端未响应时保留默认配置 */ }
                 }
             }
             const tileInput = document.getElementById('tileServerUrl');
             if (tileInput) tileInput.value = Config.SERVER.TILE_SERVER;
             
-            // 1. 初始化 3D 地球（严格使用上述瓦片源地址，不可用时无底图）
+            // 初始化 3D 地球（使用上述瓦片源，不可用时无底图）
             this.globe3d = new Globe3D('globe3d');
-            window.globe3d = this.globe3d; // 全局访问
+            window.globe3d = this.globe3d; // 供全局引用
             
-            // 2. 初始化网格系统
             this.gridSystem = new GridSystem(this.globe3d);
-            
-            // 3. 初始化 Agent 聊天
-            this.chatAgent = new ChatAgent();
-            
-            // 4. 初始化面板管理
+            this.chatAgent = new ChatAgent(this);
             this.panelManager = new PanelManager();
-            
-            // 5. 初始化右键菜单
             this.contextMenu = new ContextMenu(this.gridSystem);
-            
-            // 6. 绑定 UI 事件
+            // 绑定 UI 事件
             this.bindUIEvents();
-            
-            // 7. 监听系统事件
+            // 绑定菜单栏
+            this.bindMenuEvents();
+            // 监听系统事件
             this.setupEventListeners();
+            // 订阅 SSE：仅在 POST 保存后推送一次，前端据此刷新，调用一次修改一次
+            this.startGridSaveSSE();
             
-            // 8. 网格控制先禁用，等地图加载成功后再启用
+            // 地图未加载前禁用网格控制，加载成功后再启用
             this.setGridControlsEnabled(false);
-            
-            // 9. 瓦片源连通状态 + 配置齐全时自动加载地图（失败不弹窗，仅显示状态）
+            // 配置齐全时自动加载地图；失败仅更新状态，不弹窗
             const tileBase = (Config.SERVER.TILE_SERVER || '').trim();
             if (!tileBase) {
                 this.setTileSourceStatus('no-config', '未读取到瓦片地址，请检查 config.json 或后端');
@@ -106,7 +110,6 @@ class App {
                 await this.loadServerMap(true);
             }
             
-            // 10. 健康检查
             await this.healthCheck();
             
             console.log('✅ App initialized successfully');
@@ -121,7 +124,7 @@ class App {
      * 绑定 UI 事件
      */
     bindUIEvents() {
-        // ===== 地图控制 =====
+        // 地图控制
         document.getElementById('loadServerMapBtn')?.addEventListener('click', () => {
             this.loadServerMap();
         });
@@ -132,48 +135,106 @@ class App {
         document.getElementById('tileServerUrl')?.addEventListener('change', () => {
             this.onTileSourceInputChange();
         });
-        
-        // ===== 网格控制 =====
+        document.getElementById('loadRoadMapBtn')?.addEventListener('click', () => {
+            this.loadRoadTileSource();
+        });
+        document.getElementById('loadElevationBtn')?.addEventListener('click', () => {
+            this.loadElevationSource();
+        });
+
+        // 网格控制
         document.getElementById('loadGridBtn')?.addEventListener('click', () => {
             this.loadSelectedGrids();
         });
         
         document.getElementById('clearGridBtn')?.addEventListener('click', () => {
+            this.gridSystem.setPreferenceHighlight(null);
             this.gridSystem.clearGrids();
+            this.updateTask3PreferenceLegend(null);
             this.chatAgent.sendSystemMessage('已清除所有网格数据。');
         });
+
+        const taskSelectList = document.getElementById('taskSelectList');
+        if (taskSelectList) {
+            taskSelectList.addEventListener('click', (e) => {
+                const row = e.target.closest('.task-select-row');
+                if (!row || e.target.classList.contains('task-select-show')) return;
+                const selected = !row.classList.contains('selected');
+                row.classList.toggle('selected', selected);
+                row.setAttribute('aria-selected', selected);
+            });
+            taskSelectList.addEventListener('change', (e) => {
+                if (!e.target.classList.contains('task-select-show')) return;
+                const row = e.target.closest('.task-select-row');
+                if (!row || !this.gridSystem) return;
+                const taskType = row.getAttribute('data-task-type');
+                this.gridSystem.setVisibleByTaskType(taskType, e.target.checked);
+            });
+        }
         
         document.getElementById('gridVisibility')?.addEventListener('change', (e) => {
             this.gridSystem.setVisible(e.target.checked);
         });
         
+        document.getElementById('preferenceDisplay')?.addEventListener('change', (e) => {
+            const checked = e.target.checked;
+            this.gridSystem.setPreferenceDisplayEnabled(checked);
+            const wrap = document.getElementById('task3PreferenceLegendWrap');
+            const container = document.getElementById('task3PreferenceLegend');
+            if (wrap && container) {
+                wrap.style.display = (checked && container.children.length > 0) ? 'flex' : 'none';
+            }
+        });
+
+        document.getElementById('channelDisplay')?.addEventListener('change', (e) => {
+            this.gridSystem.setChannelDisplayEnabled(e.target.checked);
+        });
+        document.getElementById('taskAreaDisplay')?.addEventListener('change', (e) => {
+            this.gridSystem.setTaskAreaDisplayEnabled(e.target.checked);
+        });
+        
         document.getElementById('gridOpacity')?.addEventListener('input', (e) => {
-            const val = e.target.value;
-            const opacity = val / 100;
+            const val = Number(e.target.value);
+            // 透明度 0 = 不透明(可见)，100 = 完全透明(不可见)，传入的 opacity 为不透明度
+            const opacity = 1 - val / 100;
             this.gridSystem.setOpacity(opacity);
             const valueEl = document.getElementById('opacityValue');
             if (valueEl) valueEl.textContent = val + '%';
             e.target.setAttribute('aria-valuenow', val);
             e.target.setAttribute('aria-valuetext', val + '%');
         });
-        
-        // 网格右键菜单开关：关闭后右击网格不弹出菜单（未使用原编辑模式，改为控制右键功能）
+
+        document.getElementById('groupMembersDisplay')?.addEventListener('change', (e) => {
+            if (e.target.checked) this.showGroupMembersModal();
+        });
+        const groupMembersModal = document.getElementById('groupMembersModal');
+        if (groupMembersModal) {
+            const uncheckGroupMembers = () => {
+                groupMembersModal.hidden = true;
+                const cb = document.getElementById('groupMembersDisplay');
+                if (cb) cb.checked = false;
+            };
+            groupMembersModal.querySelector('.group-members-modal-close')?.addEventListener('click', uncheckGroupMembers);
+            groupMembersModal.querySelector('.group-members-modal-backdrop')?.addEventListener('click', uncheckGroupMembers);
+        }
+
+        // 网格右键菜单开关：关闭后右击网格不弹出菜单
         document.getElementById('editMode')?.addEventListener('change', () => {});
         
-        // ===== 缩放控制 =====
+        // 缩放控制：一级一级放大/缩小
         document.getElementById('zoomInBtn')?.addEventListener('click', () => {
-            this.globe3d.zoom(10);
+            this.globe3d.zoom(1);
         });
         
         document.getElementById('zoomOutBtn')?.addEventListener('click', () => {
-            this.globe3d.zoom(-10);
+            this.globe3d.zoom(-1);
         });
         
         document.getElementById('resetViewBtn')?.addEventListener('click', () => {
             this.globe3d.resetView();
         });
-        
-        // ===== 小工具（右侧按钮）：放大镜 = 显示/隐藏搜索框 =====
+
+        // 小工具：搜索（显示/隐藏搜索框）
         document.getElementById('placeSearchBtn')?.addEventListener('click', () => {
             this.searchPanelOpen = !this.searchPanelOpen;
             this.updateToolPanelsDisplay();
@@ -188,11 +249,11 @@ class App {
             if (e.key === 'Enter') this.searchPlace();
         });
         
-        // ===== 小工具（右侧按钮）：尺子 = 测量距离 =====
+        // 小工具：测量距离
         document.getElementById('measureDistanceBtn')?.addEventListener('click', () => this.toggleMeasureMode());
         document.getElementById('clearMeasureBtn')?.addEventListener('click', () => this.clearMeasure());
 
-        // ===== 小工具：绘制（折线 / 矩形 / 圆）三个独立图标 =====
+        // 小工具：绘制（折线 / 矩形 / 圆）
         document.getElementById('drawPolylineBtn')?.addEventListener('click', () => this.toggleDrawPolylineMode());
         document.getElementById('drawRectBtn')?.addEventListener('click', () => this.toggleDrawRectMode());
         document.getElementById('drawCircleBtn')?.addEventListener('click', () => this.toggleDrawCircleMode());
@@ -200,6 +261,334 @@ class App {
         document.getElementById('clearPolylineBtn')?.addEventListener('click', () => this.clearDrawPolyline());
         document.getElementById('clearRectBtn')?.addEventListener('click', () => this.clearDrawRect());
         document.getElementById('clearCircleBtn')?.addEventListener('click', () => this.clearDrawCircle());
+
+        this.bindTaskAreaDrag();
+    }
+
+    /**
+     * 绑定任务区域拖动：编辑模式下选中任务区域后，左键按住可拖动；松开后显示是否移入新区域确认浮层
+     */
+    bindTaskAreaDrag() {
+        const viewer = this.globe3d && this.globe3d.getViewer();
+        if (!viewer) return;
+        const self = this;
+        const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+
+        handler.setInputAction((movement) => {
+            if (!document.getElementById('editMode') || !document.getElementById('editMode').checked) return;
+            const areaKey = this.gridSystem.selectedTaskAreaKey;
+            if (!areaKey) return;
+            const drilled = viewer.scene.drillPick(movement.position);
+            let taskArea = null;
+            for (let i = 0; i < drilled.length; i++) {
+                const entity = drilled[i] && drilled[i].id;
+                if (!entity) continue;
+                const ta = this.gridSystem.getTaskAreaByEntity(entity);
+                if (ta && ta.areaKey === areaKey) {
+                    taskArea = ta;
+                    break;
+                }
+            }
+            if (!taskArea) return;
+            this._taskAreaDrag = { areaKey, startLon: taskArea.area.longitude, startLat: taskArea.area.latitude };
+            viewer.scene.screenSpaceCameraController.enableRotate = false;
+        }, Cesium.ScreenSpaceEventType.LEFT_DOWN);
+
+        handler.setInputAction((movement) => {
+            if (!this._taskAreaDrag) return;
+            const cartesian = viewer.camera.pickEllipsoid(movement.endPosition, viewer.scene.globe.ellipsoid);
+            if (!cartesian) return;
+            const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
+            const lon = Cesium.Math.toDegrees(cartographic.longitude);
+            const lat = Cesium.Math.toDegrees(cartographic.latitude);
+            this.gridSystem.updateTaskAreaPosition(this._taskAreaDrag.areaKey, lon, lat);
+        }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+
+        handler.setInputAction((movement) => {
+            if (!this._taskAreaDrag) return;
+            viewer.scene.screenSpaceCameraController.enableRotate = true;
+            const dragState = this._taskAreaDrag;
+            this._taskAreaDrag = null;
+            const item = this.gridSystem.taskAreaEntities.find(t => t.areaKey === dragState.areaKey);
+            if (!item) return;
+            const newLon = item.area.longitude;
+            const newLat = item.area.latitude;
+            const cartesian = Cesium.Cartesian3.fromDegrees(newLon, newLat, item.area.altitude || 0);
+            this.showTaskAreaMoveConfirm(viewer.scene, cartesian, newLon, newLat, () => {
+                this.saveTaskAreaAndCloseConfirm();
+            }, () => {
+                this.gridSystem.updateTaskAreaPosition(dragState.areaKey, dragState.startLon, dragState.startLat);
+            });
+        }, Cesium.ScreenSpaceEventType.LEFT_UP);
+
+        // 延迟清理拖动状态，避免与 Cesium 画布上的 LEFT_UP 竞态（document 先于 canvas 收到 mouseup 会误清 _taskAreaDrag）
+        document.addEventListener('mouseup', () => {
+            setTimeout(() => {
+                if (this._taskAreaDrag && viewer && viewer.scene && viewer.scene.screenSpaceCameraController) {
+                    viewer.scene.screenSpaceCameraController.enableRotate = true;
+                    this._taskAreaDrag = null;
+                }
+            }, 0);
+        });
+    }
+
+    /**
+     * 在任务区域新位置旁显示确认浮层：是否移入到新区域 + 新区域经纬度 + 确认/取消
+     */
+    showTaskAreaMoveConfirm(scene, cartesian, newLon, newLat, onConfirm, onCancel) {
+        this.hideTaskAreaMoveConfirm();
+        const canvas = scene.canvas;
+        const coord = scene.cartesianToCanvasCoordinates(cartesian);
+        if (!coord) return;
+        const rect = canvas.getBoundingClientRect();
+        const left = rect.left + coord.x - 120;
+        const top = rect.top + coord.y - 80;
+        const div = document.createElement('div');
+        div.className = 'task-area-move-confirm';
+        div.setAttribute('role', 'dialog');
+        div.setAttribute('aria-label', '确认移入新区域');
+        div.innerHTML = `
+            <p class="task-area-move-confirm-title">是否移入到这个新区域？</p>
+            <p class="task-area-move-confirm-coords">经度 ${newLon.toFixed(6)}°<br>纬度 ${newLat.toFixed(6)}°</p>
+            <div class="task-area-move-confirm-actions">
+                <button type="button" class="btn-primary task-area-move-confirm-ok">确认移入</button>
+                <button type="button" class="btn-secondary task-area-move-confirm-cancel">取消</button>
+            </div>
+        `;
+        div.style.left = `${Math.max(4, left)}px`;
+        div.style.top = `${Math.max(4, top)}px`;
+        const onOk = div.querySelector('.task-area-move-confirm-ok');
+        const onCancelBtn = div.querySelector('.task-area-move-confirm-cancel');
+        onOk.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this.hideTaskAreaMoveConfirm();
+            onConfirm();
+        });
+        onCancelBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this.hideTaskAreaMoveConfirm();
+            onCancel();
+        });
+        document.body.appendChild(div);
+        this._taskAreaConfirmOverlay = div;
+    }
+
+    hideTaskAreaMoveConfirm() {
+        document.querySelectorAll('.task-area-move-confirm').forEach((el) => {
+            if (el.parentNode) el.parentNode.removeChild(el);
+        });
+        this._taskAreaConfirmOverlay = null;
+    }
+
+    /** 任务区域：用户点击「接收」或由聊天输入触发 */
+    onTaskAreaConfirmAccept() {
+        if (!this._pendingTaskAreaConfirm || !this._pendingTaskAreaConfirm.choice || !this.chatAgent) return;
+        this._pendingTaskAreaConfirm = null;
+        apiService.confirmTaskArea().then((res) => {
+            if (res && res.error) {
+                this.chatAgent.sendSystemMessage('确认失败: ' + res.error);
+            } else {
+                this.chatAgent.sendSystemMessage('已确认接收，数据已返回给请求端。');
+            }
+        });
+    }
+
+    /** 任务区域：用户点击「不接受/需要修改」或由聊天输入触发 */
+    onTaskAreaConfirmRejectModify() {
+        if (!this._pendingTaskAreaConfirm || !this._pendingTaskAreaConfirm.choice || !this.chatAgent) return;
+        this.chatAgent.sendSystemMessage('请在地图上修改任务区域（可右键选中区域后拖动调整）。保存后会出现「修改后确认」卡片，可在其中选择「已修改完毕」或「继续修改」。');
+        this._pendingTaskAreaConfirm.choice = false;
+        this._pendingTaskAreaConfirm.modificationDone = true;
+    }
+
+    /** 任务区域：用户点击「已修改完毕」或由聊天输入触发 */
+    onTaskAreaModifyDone() {
+        if (!this._pendingTaskAreaConfirm || !this._pendingTaskAreaConfirm.modificationDone || !this.chatAgent) return;
+        this._pendingTaskAreaConfirm = null;
+        apiService.confirmTaskArea().then((res) => {
+            if (res && res.error) {
+                this.chatAgent.sendSystemMessage('确认失败: ' + res.error);
+            } else {
+                this.chatAgent.sendSystemMessage('已确认，已将最新数据返回给请求端。');
+            }
+        });
+    }
+
+    /** 任务区域：用户点击「继续修改」—— 再发一张修改确认卡片，便于再次保存后继续点 */
+    onTaskAreaContinueModify() {
+        if (!this._pendingTaskAreaConfirm || !this._pendingTaskAreaConfirm.modificationDone || !this.chatAgent) return;
+        this.chatAgent.sendSystemMessage('可继续在地图上调整任务区域；保存后会再次弹出确认。');
+    }
+
+    /**
+     * 处理用户在任务区域确认流程中的回复。由 ChatAgent 在 sendMessage 时调用。
+     * @param {string} content - 用户输入
+     * @returns {boolean} 是否已消费（true 则 ChatAgent 不再走通用回复）
+     */
+    handleTaskAreaConfirmationReply(content) {
+        if (!this._pendingTaskAreaConfirm || !this.chatAgent) return false;
+        const raw = (content || '').trim();
+        const lower = raw.toLowerCase();
+        if (this._pendingTaskAreaConfirm.choice) {
+            if (raw === '接收' || lower.includes('接收')) {
+                this.onTaskAreaConfirmAccept();
+                return true;
+            }
+            if (raw === '不接受' || raw === '需要修改' || lower.includes('不接受') || lower.includes('需要修改')) {
+                this.onTaskAreaConfirmRejectModify();
+                return true;
+            }
+            this.chatAgent.sendSystemMessage('请使用上方面板中的「接收」或「不接受 / 需要修改」按钮，或在输入框输入相应关键词。');
+            return true;
+        }
+        if (this._pendingTaskAreaConfirm.modificationDone) {
+            if (raw === '已修改完毕' || lower.includes('已修改完毕')) {
+                this.onTaskAreaModifyDone();
+                return true;
+            }
+            if (raw === '继续修改' || lower.includes('继续修改')) {
+                this.onTaskAreaContinueModify();
+                return true;
+            }
+            this.chatAgent.sendSystemMessage('请使用上方面板中的「已修改完毕」或「继续修改」按钮，或在输入框输入对应关键词。');
+            return true;
+        }
+        return false;
+    }
+
+    async saveTaskAreaAndCloseConfirm() {
+        this.hideTaskAreaMoveConfirm();
+        try {
+            const data = this.gridSystem.getTaskAreaDataForSave();
+            // 必须用 save-ui：save 会与 Agent 共用阻塞式接口，await 会卡死直到 confirm，无法弹出「修改后确认」卡片
+            const res = await apiService.saveTaskAreaUi(data);
+            if (res && res.error) {
+                if (this.chatAgent) this.chatAgent.sendSystemMessage('任务区域保存失败: ' + res.error);
+            } else {
+                this._lastTaskAreaChatSentAt = Date.now();
+                this.gridSystem.clearSelectedTaskArea();
+                if (this.chatAgent) {
+                    if (this._pendingTaskAreaConfirm && this._pendingTaskAreaConfirm.modificationDone) {
+                        const dataText = this._formatTaskAreaForChat(JSON.parse(JSON.stringify(data)));
+                        this.chatAgent.addTaskAreaModifyDoneCard(dataText);
+                    } else {
+                        const dataCopy = JSON.parse(JSON.stringify(data));
+                        const dataText = this._formatTaskAreaForChat(dataCopy);
+                        this.chatAgent.sendSystemMessage('已生成任务区域数据，已保存数据并已绘制显示。\n\n本次数据：\n' + dataText);
+                    }
+                }
+            }
+        } catch (err) {
+            console.error('saveTaskAreaAndCloseConfirm', err);
+            if (this.chatAgent) this.chatAgent.sendSystemMessage('任务区域保存失败: ' + (err.message || String(err)));
+        }
+    }
+
+    /**
+     * 绑定菜单栏：下拉开关 + 菜单项动作
+     */
+    bindMenuEvents() {
+        const menu = document.getElementById('appMenu');
+        if (!menu) return;
+
+        const wraps = menu.querySelectorAll('.menu-item-wrap');
+        const triggers = menu.querySelectorAll('.menu-trigger');
+        const dropdownItems = menu.querySelectorAll('.menu-dropdown-item[data-action]');
+
+        // 点击菜单项时关闭所有下拉
+        const closeAllMenus = () => wraps.forEach(w => w.classList.remove('open'));
+
+        triggers.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const wrap = btn.closest('.menu-item-wrap');
+                const wasOpen = wrap.classList.contains('open');
+                closeAllMenus();
+                if (!wasOpen) wrap.classList.add('open');
+                btn.setAttribute('aria-expanded', wrap.classList.contains('open'));
+            });
+        });
+
+        dropdownItems.forEach(item => {
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const action = item.getAttribute('data-action');
+                this.onMenuAction(action);
+                closeAllMenus();
+                menu.querySelectorAll('.menu-trigger').forEach(t => t.setAttribute('aria-expanded', 'false'));
+            });
+        });
+
+        document.addEventListener('click', () => closeAllMenus());
+    }
+
+    /**
+     * 菜单项动作分发
+     */
+    onMenuAction(action) {
+        switch (action) {
+            case 'reload-map':
+                this.loadServerMap();
+                break;
+            case 'export-config':
+                this.chatAgent?.sendSystemMessage?.('导出配置功能可在后续版本中实现。');
+                break;
+            case 'exit':
+                if (typeof window.close === 'function') window.close(); else this.chatAgent?.sendSystemMessage?.('请关闭浏览器标签页退出。');
+                break;
+            case 'clear-grids':
+                this.gridSystem?.clearGrids?.();
+                this.chatAgent?.sendSystemMessage?.('已清除所有网格数据。');
+                break;
+            case 'deselect-all':
+                this.gridSystem?.deselectGrids?.();
+                break;
+            case 'view-left-panel':
+                this.panelManager?.toggleLeftPanel?.();
+                break;
+            case 'view-right-panel':
+                this.panelManager?.toggleRightPanel?.();
+                break;
+            case 'view-reset':
+                this.globe3d?.resetView?.();
+                break;
+            case 'map-load':
+                document.getElementById('loadServerMapBtn')?.click();
+                break;
+            case 'map-zoom-in':
+                this.globe3d?.zoom?.(1);
+                break;
+            case 'map-zoom-out':
+                this.globe3d?.zoom?.(-1);
+                break;
+            case 'tool-search':
+                this.searchPanelOpen = true;
+                this.updateToolPanelsDisplay?.();
+                document.getElementById('placeSearchInput')?.focus?.();
+                break;
+            case 'tool-measure':
+                this.toggleMeasureMode?.();
+                break;
+            case 'tool-polyline':
+                this.toggleDrawPolylineMode?.();
+                break;
+            case 'tool-rect':
+                this.toggleDrawRectMode?.();
+                break;
+            case 'tool-circle':
+                this.toggleDrawCircleMode?.();
+                break;
+            case 'help-about':
+                alert('DA智能体系统\n版本 2.0\n基于 Cesium 的离线三维地球与网格管理平台。');
+                break;
+            case 'help-docs':
+                this.chatAgent?.sendSystemMessage?.('使用说明：左侧加载地图与网格，右侧与 Agent 对话，地图上可测量、搜索、绘制。');
+                break;
+            default:
+                break;
+        }
     }
     
     /**
@@ -211,14 +600,24 @@ class App {
             this.gridSystem.loadGridData(data, taskType);
         });
         
+        // 任务3 偏好高亮（图例点击）
+        eventBus.on('grid:preferenceHighlight', ({ preferenceIndex }) => {
+            this.gridSystem.setPreferenceHighlight(preferenceIndex ?? null);
+        });
+        
         // 网格导入完成
-        eventBus.on('grid:importComplete', ({ tasks }) => {
-            // 自动选中任务选择框
-            const select = document.getElementById('taskSelect');
-            if (select) {
-                Array.from(select.options).forEach(option => {
-                    option.selected = tasks.includes(option.value);
+        eventBus.on('grid:importComplete', ({ tasks, task3Preferences }) => {
+            const list = document.getElementById('taskSelectList');
+            if (list) {
+                list.querySelectorAll('.task-select-row').forEach(row => {
+                    const type = row.getAttribute('data-task-type');
+                    const selected = tasks.includes(type);
+                    row.classList.toggle('selected', selected);
+                    row.setAttribute('aria-selected', selected);
                 });
+            }
+            if (task3Preferences && tasks.includes('task3Grid')) {
+                this.updateTask3PreferenceLegend(task3Preferences);
             }
         });
         
@@ -234,8 +633,8 @@ class App {
             if ((this.drawPolylineMode || this.drawRectMode || this.drawCircleMode) && e && e.lat != null && e.lon != null) this.onDrawClick(e);
         });
         
-        // 网格选中/取消仅通过右键菜单操作，左键点击不改变选中状态
-        // 右键菜单：用 document 捕获 contextmenu，先判断是否点到搜索标记，否则拾取网格
+        // 网格选中与取消仅通过右键菜单；左键点击不改变选中状态
+        // 使用 document 捕获 contextmenu：先判断是否为搜索标记，否则拾取网格
         const self = this;
         this._markerMenuEntity = null;
         document.addEventListener('contextmenu', function onContextMenu(e) {
@@ -262,8 +661,24 @@ class App {
             e.preventDefault();
             e.stopPropagation();
             if (!self.contextMenu) return;
-            const grids = [];
             const drilled = viewer.scene.drillPick(pos);
+            let taskArea = null;
+            for (let i = 0; i < drilled.length; i++) {
+                const entity = drilled[i] && drilled[i].id;
+                if (entity) {
+                    const ta = self.gridSystem.getTaskAreaByEntity(entity);
+                    if (ta) {
+                        taskArea = ta;
+                        break;
+                    }
+                }
+            }
+            if (taskArea) {
+                self.contextMenu.showAtTaskArea(taskArea, e.clientX, e.clientY);
+                return;
+            }
+            const grids = [];
+            const pick = viewer.scene.pick(pos);
             for (let i = 0; i < drilled.length; i++) {
                 const obj = drilled[i];
                 const entity = obj && obj.id;
@@ -272,12 +687,9 @@ class App {
                     if (g && !grids.some(gg => gg.gridIndex === g.gridIndex && gg.taskType === g.taskType)) grids.push(g);
                 }
             }
-            if (grids.length === 0) {
-                const pick = viewer.scene.pick(pos);
-                if (pick && pick.id) {
-                    const g = self.gridSystem.getGridByEntity(pick.id);
-                    if (g) grids.push(g);
-                }
+            if (grids.length === 0 && pick && pick.id) {
+                const g = self.gridSystem.getGridByEntity(pick.id);
+                if (g) grids.push(g);
             }
             if (grids.length > 1) {
                 self.contextMenu.showGridPicker(grids, e.clientX, e.clientY);
@@ -329,12 +741,12 @@ class App {
     /**
      * 加载服务器地图
      * 依次尝试多个常见瓦片路径，并区分「服务未启动」与「瓦片文件不存在」
-     * @param {boolean} silent - true 时失败不弹 alert（用于初始化自动加载）
+     * @param {boolean} silent - 为 true 时失败不弹窗（用于初始化自动加载）
      */
     async loadServerMap(silent = false) {
         let raw = document.getElementById('tileServerUrl').value.trim();
         raw = raw.replace(/\/Tiles\//gi, '/tiles/').replace(/\/Tiles$/gi, '/tiles').replace(/\/$/, '');
-        // 补全为完整地址：仅端口→127.0.0.1；IP:端口 或 域名:端口→加 http（局域网请直接填 IP，如 192.168.1.100:9001）
+        // 将输入补全为完整 URL：纯端口则用 127.0.0.1；IP:端口或域名:端口自动添加 http 前缀
         if (/^\d+$/.test(raw)) {
             raw = `http://127.0.0.1:${raw}`;
         } else if (/^(localhost|127\.0\.0\.1):\d+$/i.test(raw)) {
@@ -362,17 +774,17 @@ class App {
             for (const path of testPaths) {
                 const testUrl = `${base}/${path}`;
                 try {
-                    // 禁用缓存，避免用旧地址(如 9002)的缓存 200 误判当前地址(如 9001)连通
+                    // 禁用缓存，防止旧地址响应导致误判当前地址连通
                     const res = await fetch(testUrl, { method: 'HEAD', mode: 'cors', cache: 'no-store' });
                     lastStatus = res.status;
                     if (res.ok) {
-                        // 若发生重定向，res.url 为最终 URL，可与 base 对比排查「填 9001 却连上 9002」等问题
+                        // 重定向时 res.url 为最终 URL，可与请求 base 对比以排查端口不一致
                         const actualUrl = (res.url || testUrl).replace(/\/[^/]+$/, '');
                         if (actualUrl !== base.replace(/\/$/, '')) {
                             console.warn('⚠️ 瓦片请求被重定向：请求', base, '→ 实际', actualUrl);
                             this.chatAgent.sendSystemMessage('⚠️ 注意：请求的地址被重定向到 ' + actualUrl + '，请确认端口是否正确。');
                         }
-                        // 真实拉一张图，避免仅 HEAD 被缓存导致误判；先带时间戳绕过缓存，失败则再试不带参数（兼容部分服务对 ? 处理异常）
+                        // 请求实际图片以验证可用性；先带时间戳防缓存，失败则重试无查询参数
                         try {
                             const imgTestUrl = testUrl + (testUrl.includes('?') ? '&' : '?') + 't=' + Date.now();
                             await apiService.loadImage(imgTestUrl);
@@ -452,15 +864,65 @@ class App {
             this.showLoading(false);
         }
     }
+
+    /**
+     * 路网图瓦片源：检查地址连通性并更新状态（后续可接入实际路网图层逻辑）
+     */
+    async loadRoadTileSource() {
+        const input = document.getElementById('roadTileServerUrl');
+        const base = (input?.value || '').trim().replace(/\/+$/, '');
+        if (!base) {
+            this.setRoadTileSourceStatus('no-config');
+            return;
+        }
+        this.setRoadTileSourceStatus('checking');
+        try {
+            const testUrl = base + '/0/0/0.png';
+            const res = await fetch(testUrl, { method: 'HEAD', mode: 'cors', cache: 'no-store' });
+            if (res.ok) {
+                this.setRoadTileSourceStatus('connected');
+                this.chatAgent.sendSystemMessage('✅ 路网图瓦片源已连通：' + base);
+            } else {
+                this.setRoadTileSourceStatus('disconnected', '服务返回 ' + res.status);
+            }
+        } catch (e) {
+            this.setRoadTileSourceStatus('disconnected', e.message || '请求异常');
+            this.chatAgent.sendSystemMessage('❌ 路网图瓦片源连接失败：' + base + ' — ' + (e.message || '请求异常'));
+        }
+    }
+
+    /**
+     * 高程数据源：检查地址连通性并更新状态（后续可接入实际高程逻辑）
+     */
+    async loadElevationSource() {
+        const input = document.getElementById('elevationSourceUrl');
+        const base = (input?.value || '').trim().replace(/\/+$/, '');
+        if (!base) {
+            this.setElevationSourceStatus('no-config');
+            return;
+        }
+        this.setElevationSourceStatus('checking');
+        try {
+            const res = await fetch(base, { method: 'HEAD', mode: 'cors', cache: 'no-store' });
+            if (res.ok) {
+                this.setElevationSourceStatus('connected');
+                this.chatAgent.sendSystemMessage('✅ 高程数据源已连通：' + base);
+            } else {
+                this.setElevationSourceStatus('disconnected', '服务返回 ' + res.status);
+            }
+        } catch (e) {
+            this.setElevationSourceStatus('disconnected', e.message || '请求异常');
+            this.chatAgent.sendSystemMessage('❌ 高程数据源连接失败：' + base + ' — ' + (e.message || '请求异常'));
+        }
+    }
     
     
     /**
-     * 加载选中的网格（与 DA_Interface 一致：先请求 task1/task2/task3/group 四类，再按键解析）
-     * 初始网格来自 task1 文件的 initGrid 键，不读单独文件。
+     * 加载选中的网格（initGrid 与 task1/task2/task3/group 各请求独立接口，再按键解析）
      */
     async loadSelectedGrids() {
-        const select = document.getElementById('taskSelect');
-        const selectedOptions = Array.from(select.selectedOptions).map(o => o.value);
+        const list = document.getElementById('taskSelectList');
+        const selectedOptions = list ? Array.from(list.querySelectorAll('.task-select-row.selected')).map(row => row.getAttribute('data-task-type')) : [];
         
         if (selectedOptions.length === 0) {
             alert('请至少选择一个任务类型');
@@ -471,24 +933,338 @@ class App {
         
         try {
             const allGridData = await apiService.getGridDataLikeDA();
-            
+            const loadedTypes = [];
+
             selectedOptions.forEach((taskType) => {
-                if (taskType === 'groups') return; // 分组为 platformGridMaps 结构，不按网格点绘制
+                if (taskType === 'groups') return; // 分组使用 platformGridMaps 结构，不按单点绘制
                 const arr = allGridData[taskType];
                 if (arr && arr.length > 0) {
                     eventBus.emit('grid:load', { data: allGridData, taskType });
+                    loadedTypes.push(taskType);
                 }
             });
-            
-            this.chatAgent.sendSystemMessage(
-                `✅ 已加载 ${selectedOptions.length} 类网格数据`
-            );
+            if (selectedOptions.includes('task3Grid') && allGridData.task3Preferences && allGridData.task3Preferences.length) {
+                this.updateTask3PreferenceLegend(allGridData.task3Preferences);
+            }
+
+            const list = document.getElementById('taskSelectList');
+            if (list) {
+                loadedTypes.forEach(taskType => {
+                    const row = list.querySelector(`.task-select-row[data-task-type="${taskType}"]`);
+                    const cb = row?.querySelector('.task-select-show');
+                    if (cb) cb.checked = true;
+                });
+            }
+            const names = loadedTypes.map(t => (Config.GRID_COLORS[t] && Config.GRID_COLORS[t].name) || t);
+            const msg = names.length > 0
+                ? `✅ 已加载 ${names.length} 类网格数据：${names.join('、')}`
+                : '✅ 已请求数据，但当前选中项均无网格数据。';
+            this.chatAgent.sendSystemMessage(msg);
             
         } catch (error) {
             console.error('Load grids failed:', error);
             alert('加载网格失败: ' + error.message);
         } finally {
             this.showLoading(false);
+        }
+    }
+
+    /**
+     * 订阅 SSE：仅在 POST /api/grid/save 或 /api/grid/preference/save 被调用后，后端推送一次，前端刷新一次；其他时间不请求、不修改。
+     */
+    startGridSaveSSE() {
+        const base = (Config.SERVER.API_SERVER || '').replace(/\/$/, '');
+        const url = base ? `${base}/api/grid/events` : '/api/grid/events';
+        try {
+            const es = new EventSource(url);
+            const self = this;
+            es.onmessage = function (ev) {
+                try {
+                    const payload = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data;
+                    if (payload && (payload.changedKeys || payload.task3PreferenceOnly)) {
+                        self.refreshGridDataFromServer(payload);
+                    }
+                } catch (e) {
+                    console.warn('Grid SSE message parse error:', e);
+                }
+            };
+            es.onerror = function () {
+                // EventSource 会自动重连，仅记录
+                console.warn('Grid SSE connection error or closed, will retry.');
+            };
+            this._gridSaveEventSource = es;
+        } catch (e) {
+            console.warn('Grid SSE not supported or failed:', e);
+        }
+    }
+
+    /**
+     * 将任务区域数据格式化为聊天框可读文案（经度、纬度、高程、长宽等）。
+     * @param {{ [areaKey: string]: { longitude?, latitude?, altitude?, length?, width?, name? } }} task_area
+     */
+    _formatTaskAreaForChat(task_area) {
+        if (!task_area || typeof task_area !== 'object') return '';
+        const lines = [];
+        Object.keys(task_area).forEach((key) => {
+            const a = task_area[key];
+            if (!a || typeof a.longitude !== 'number' || typeof a.latitude !== 'number') return;
+            const name = (a.name && String(a.name).trim()) || key;
+            const parts = [`${name}(${key})：经度 ${Number(a.longitude).toFixed(6)}° 纬度 ${Number(a.latitude).toFixed(6)}°`];
+            if (a.altitude != null) parts.push(`高程 ${a.altitude} m`);
+            if (a.length != null) parts.push(`长 ${a.length} km`);
+            if (a.width != null) parts.push(`宽 ${a.width} km`);
+            lines.push('• ' + parts.join('，'));
+        });
+        return lines.length ? lines.join('\n') : '（无区域）';
+    }
+
+    /**
+     * 将通道数据格式化为聊天框可读文案。
+     * @param {{ channel?: { cubeList?: Array } }} channelData
+     */
+    _formatChannelForChat(channelData) {
+        const list = channelData && channelData.channel && channelData.channel.cubeList;
+        if (!Array.isArray(list) || list.length === 0) return '（无通道）';
+        const lines = list.slice(0, 5).map((cube, i) => {
+            const jd = cube.center_jd != null ? Number(cube.center_jd).toFixed(5) : '-';
+            const wd = cube.center_wd != null ? Number(cube.center_wd).toFixed(5) : '-';
+            const len = cube.length != null ? cube.length : '-';
+            const wid = cube.width != null ? cube.width : '-';
+            return `• 通道${i + 1}：中心经度 ${jd}° 纬度 ${wd}°，长 ${len} km 宽 ${wid} km`;
+        });
+        if (list.length > 5) lines.push(`• … 共 ${list.length} 个通道`);
+        return lines.join('\n');
+    }
+
+    /**
+     * 根据变更的文件键得到「调用了什么接口、保存了什么数据」的文案，用于聊天框。
+     * @param {string[]} changedKeys - 来自 last-update 的键：task1 / task2 / task3 / group
+     */
+    _getSavedDataSummary(changedKeys) {
+        const labels = {
+            task1: { name: '任务1网格', api: 'POST /api/grid/save (task=task1)' },
+            task2: { name: '任务2网格', api: 'POST /api/grid/save (task=task2)' },
+            task3: { name: '任务3网格与偏好', api: 'POST /api/grid/save (task=task3) 或 POST /api/grid/preference/save' },
+            group: { name: '分组数据', api: 'POST /api/grid/save (task=group)' }
+        };
+        return changedKeys.map(k => labels[k]).filter(Boolean);
+    }
+
+    /**
+     * 将后端变更的文件键映射为前端要刷新的网格任务类型（只更新 Agent 改动的数据，不重载全部）。
+     * task1 文件 -> initGrid + task1Grid；task2 -> task2Grid；task3 -> task3Grid；group 无网格层。
+     */
+    _changedKeysToTaskTypes(changedKeys) {
+        const taskTypes = [];
+        if (changedKeys.includes('task1')) taskTypes.push('initGrid', 'task1Grid');
+        if (changedKeys.includes('task2')) taskTypes.push('task2Grid');
+        if (changedKeys.includes('task3')) taskTypes.push('task3Grid');
+        if (changedKeys.includes('group')) { /* 分组无网格层，不加入 */ }
+        return [...new Set(taskTypes)];
+    }
+
+    /**
+     * 仅根据 Agent 更新的数据刷新界面：只刷新变更对应的部分；task3 区分「仅网格」与「仅偏好」。
+     * @param {Object} opts
+     * @param {string[]} [opts.changedKeys] - 本次发生变更的文件键（task1/task2/task3/group）
+     * @param {boolean} [opts.task3GridOnly] - 仅 task3 网格保存，不更新偏好图例
+     * @param {boolean} [opts.task3PreferenceOnly] - 仅偏好保存，只更新偏好图例与着色，不重载 task3 网格
+     */
+    async refreshGridDataFromServer(opts = {}) {
+        let { changedKeys = [], task3GridOnly = false, task3PreferenceOnly = false } = typeof opts === 'object' ? opts : { changedKeys: opts };
+        try {
+            if (changedKeys.includes('channel')) {
+                const base = (Config.SERVER.API_SERVER || '').replace(/\/$/, '');
+                const channelRes = await fetch(base ? `${base}/api/grid/channel` : '/api/grid/channel');
+                const channelData = channelRes.ok ? await channelRes.json() : { channel: { cubeList: [] } };
+                this.gridSystem.loadChannelData(channelData);
+                if (this.chatAgent) {
+                    const dataCopy = JSON.parse(JSON.stringify(channelData));
+                    const dataText = this._formatChannelForChat(dataCopy);
+                    const msg = '已生成通道数据，已保存数据并已绘制显示。\n\n本次数据：\n' + dataText;
+                    this.chatAgent.sendSystemMessage(msg);
+                }
+                changedKeys = changedKeys.filter(k => k !== 'channel');
+                if (changedKeys.length === 0) return;
+            }
+            if (changedKeys.includes('task_area')) {
+                const base = (Config.SERVER.API_SERVER || '').replace(/\/$/, '');
+                const taskAreaRes = await fetch(base ? `${base}/api/grid/task-area` : '/api/grid/task-area');
+                const taskAreaData = taskAreaRes.ok ? await taskAreaRes.json() : { task_area: {} };
+                this.gridSystem.loadTaskAreaData(taskAreaData);
+                const justSentByFrontend = (Date.now() - this._lastTaskAreaChatSentAt) < 5000;
+                if (this.chatAgent && !justSentByFrontend) {
+                    const dataCopy = JSON.parse(JSON.stringify(taskAreaData.task_area || {}));
+                    const dataText = this._formatTaskAreaForChat(dataCopy);
+                    if (this._pendingTaskAreaConfirm && this._pendingTaskAreaConfirm.modificationDone) {
+                        // 用户已选「需要修改」：仅同步地图，不重复弹出 Agent 首次确认卡
+                    } else {
+                        const hadChoicePending = !!(this._pendingTaskAreaConfirm && this._pendingTaskAreaConfirm.choice);
+                        if (!this._pendingTaskAreaConfirm) {
+                            this._pendingTaskAreaConfirm = { choice: true, modificationDone: false };
+                        }
+                        const variant = hadChoicePending ? 'updated' : 'initial';
+                        this.chatAgent.addTaskAreaConfirmCard(dataText, { variant });
+                    }
+                }
+                changedKeys = changedKeys.filter(k => k !== 'task_area');
+                if (changedKeys.length === 0) return;
+            }
+            if (task3PreferenceOnly) {
+                const raw = await apiService.getPreferenceGridData();
+                const preferences = raw.preferences || [];
+                this.gridSystem.setPreferenceHighlight(null);
+                this.gridSystem.updateTask3PreferenceOnly(preferences);
+                this.updateTask3PreferenceLegend(preferences);
+                if (this.chatAgent) {
+                    const prefSummary = preferences.length
+                        ? `本次数据：共 ${preferences.length} 个偏好组` + (preferences.length <= 10
+                            ? '（' + preferences.map((p, i) => `偏好${i + 1}: ${(p.grids || p).length || 0} 个网格`).join('；') + '）'
+                            : '')
+                        : '本次数据：无偏好组';
+                    this.chatAgent.sendSystemMessage(
+                        '已生成任务3偏好数据，已保存数据并已绘制显示。\n\n本次数据：' + (prefSummary ? '\n' + prefSummary : '（无偏好组）')
+                    );
+                }
+                return;
+            }
+            const taskTypesToUpdate = this._changedKeysToTaskTypes(changedKeys);
+            if (taskTypesToUpdate.length === 0) {
+                if (this.chatAgent && changedKeys.length > 0) {
+                    const items = this._getSavedDataSummary(changedKeys);
+                    const dataNames = items.map(i => i.name).join('、');
+                    this.chatAgent.sendSystemMessage(`已生成${dataNames}数据，已保存数据并已绘制显示。（分组数据无网格层，界面无需刷新。）`);
+                }
+                return;
+            }
+            const allGridData = await apiService.getGridDataLikeDA();
+            if (taskTypesToUpdate.includes('task3Grid')) {
+                this.gridSystem.setPreferenceHighlight(null);
+            }
+            this.gridSystem.clearGridsByTaskTypes(taskTypesToUpdate);
+            const loaded = [];
+            taskTypesToUpdate.forEach((taskType) => {
+                const arr = allGridData[taskType];
+                if (arr && arr.length > 0) {
+                    eventBus.emit('grid:load', { data: allGridData, taskType });
+                    loaded.push(taskType);
+                }
+            });
+            const currentVisible = Array.from(this.gridSystem.visibleGrids);
+            const updateTask3Legend = taskTypesToUpdate.includes('task3Grid') && !task3GridOnly;
+            eventBus.emit('grid:importComplete', {
+                tasks: currentVisible,
+                task3Preferences: updateTask3Legend ? (allGridData.task3Preferences || []) : null
+            });
+            if (this.chatAgent && changedKeys.length > 0) {
+                let items = this._getSavedDataSummary(changedKeys);
+                if (task3GridOnly) {
+                    items = items.map(i => i.name === '任务3网格与偏好'
+                        ? { name: '任务3网格', api: 'POST /api/grid/save (task=task3)' }
+                        : i);
+                }
+                const dataNames = items.map(i => i.name).join('、');
+                const typeLabels = { initGrid: '初始网格', task1Grid: '任务1网格', task2Grid: '任务2网格', task3Grid: '任务3网格' };
+                const dataLines = loaded.map((taskType) => {
+                    const arr = allGridData[taskType];
+                    const n = Array.isArray(arr) ? arr.length : 0;
+                    return `${typeLabels[taskType] || taskType} ${n} 个`;
+                });
+                const dataSummary = dataLines.length ? '本次数据：' + dataLines.join('，') : '';
+                this.chatAgent.sendSystemMessage(
+                    `已生成${dataNames}数据，已保存数据并已绘制显示。${dataSummary ? '\n\n' + dataSummary : ''}`
+                );
+            } else if (this.chatAgent) {
+                this.chatAgent.sendSystemMessage('已生成数据，已保存数据并已绘制显示。');
+            }
+        } catch (error) {
+            console.error('Refresh grid data failed:', error);
+            if (this.chatAgent) {
+                this.chatAgent.sendSystemMessage('检测到数据更新，但拉取失败：' + (error.message || '请稍后重试。'));
+            }
+        }
+    }
+    
+    /**
+     * 更新任务3 偏好图例：有 preferences 时显示并填充可点击项，点击高亮对应偏好网格；null 时隐藏。
+     */
+    updateTask3PreferenceLegend(task3Preferences) {
+        const wrap = document.getElementById('task3PreferenceLegendWrap');
+        const container = document.getElementById('task3PreferenceLegend');
+        if (!wrap || !container) return;
+        if (!task3Preferences || !Array.isArray(task3Preferences) || task3Preferences.length === 0) {
+            wrap.style.display = 'none';
+            container.innerHTML = '';
+            return;
+        }
+        const preferenceDisplayEl = document.getElementById('preferenceDisplay');
+        const showLegend = !preferenceDisplayEl || preferenceDisplayEl.checked;
+        const colors = Config.TASK3_PREFERENCE_COLORS || [];
+        container.innerHTML = '';
+        const allBtn = document.createElement('button');
+        allBtn.type = 'button';
+        allBtn.className = 'preference-legend-item active';
+        allBtn.setAttribute('data-preference-index', '-1');
+        allBtn.innerHTML = '<span class="preference-swatch" style="background:var(--text-muted);"></span>全部';
+        allBtn.title = '显示全部偏好';
+        allBtn.addEventListener('click', () => {
+            container.querySelectorAll('.preference-legend-item').forEach(el => el.classList.remove('active'));
+            allBtn.classList.add('active');
+            eventBus.emit('grid:preferenceHighlight', { preferenceIndex: null });
+        });
+        container.appendChild(allBtn);
+        task3Preferences.forEach((_, idx) => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'preference-legend-item';
+            item.setAttribute('data-preference-index', String(idx));
+            const color = colors[idx % colors.length];
+            const stroke = (color && color.stroke) ? color.stroke : '#888';
+            item.innerHTML = `<span class="preference-swatch" style="background:${stroke};"></span>偏好${idx + 1}`;
+            item.title = `高亮偏好${idx + 1}`;
+            item.addEventListener('click', () => {
+                container.querySelectorAll('.preference-legend-item').forEach(el => el.classList.remove('active'));
+                item.classList.add('active');
+                eventBus.emit('grid:preferenceHighlight', { preferenceIndex: idx });
+            });
+            container.appendChild(item);
+        });
+        wrap.style.display = showLegend ? 'flex' : 'none';
+        this.gridSystem.setPreferenceDisplayEnabled(showLegend);
+    }
+
+    /**
+     * 显示分组情况弹窗：请求 group 数据，将 members（各组包含的平台/编号）列出来
+     */
+    async showGroupMembersModal() {
+        const modal = document.getElementById('groupMembersModal');
+        const body = document.getElementById('groupMembersModalBody');
+        if (!modal || !body) return;
+        body.textContent = '加载中...';
+        modal.hidden = false;
+        try {
+            const data = await apiService.getGroupMembers();
+            const groups = data && data.groups ? data.groups : [];
+            if (groups.length === 0 || !groups[0].members) {
+                body.innerHTML = '<p class="group-row">暂无分组数据，请先加载分组网格或确认后端返回 group 数据。</p>';
+                return;
+            }
+            const frag = document.createDocumentFragment();
+            const members = groups[0].members;
+            const keys = Object.keys(members).sort((a, b) => Number(a) - Number(b));
+            keys.forEach((key) => {
+                const arr = members[key];
+                const list = Array.isArray(arr) ? arr.join(', ') : String(arr);
+                const row = document.createElement('div');
+                row.className = 'group-row';
+                row.innerHTML = `<span class="group-name">组 ${key}</span>${list || '—'}`;
+                frag.appendChild(row);
+            });
+            body.innerHTML = '';
+            body.appendChild(frag);
+        } catch (err) {
+            console.error('Fetch group data failed:', err);
+            body.textContent = '加载分组数据失败: ' + (err.message || err);
         }
     }
     
@@ -510,8 +1286,20 @@ class App {
      * 瓦片源下方连通状态：checking | connected | disconnected | no-config | address-changed
      */
     setTileSourceStatus(status, message = '') {
-        const el = document.getElementById('tileSourceStatus');
-        const textEl = document.getElementById('tileSourceStatusText');
+        this._setSourceStatus('tileSourceStatus', 'tileSourceStatusText', status, message, '未读取到瓦片地址，请检查 config.json 或后端');
+    }
+
+    setRoadTileSourceStatus(status, message = '') {
+        this._setSourceStatus('roadTileSourceStatus', 'roadTileSourceStatusText', status, message, '请配置路网图瓦片服务地址');
+    }
+
+    setElevationSourceStatus(status, message = '') {
+        this._setSourceStatus('elevationSourceStatus', 'elevationSourceStatusText', status, message, '请配置高程数据源地址');
+    }
+
+    _setSourceStatus(containerId, textId, status, message, noConfigDefault) {
+        const el = document.getElementById(containerId);
+        const textEl = document.getElementById(textId);
         if (!el || !textEl) return;
         el.className = 'tile-source-status ' + status;
         const dot = '<span class="status-dot"></span>';
@@ -519,7 +1307,7 @@ class App {
             checking: dot + ' 检查中...',
             connected: dot + ' 已连通',
             disconnected: dot + ' 未连通',
-            'no-config': dot + ' ' + (message || '未读取到瓦片地址，请检查 config.json 或后端'),
+            'no-config': dot + ' ' + (message || noConfigDefault),
             'address-changed': dot + ' ' + (message || '地址已变更，请点击加载')
         };
         textEl.innerHTML = messages[status] || '';
@@ -731,7 +1519,7 @@ class App {
                 labelEntity.label.text = segKm + ' km';
             }
         }
-        // 未使用的线段与标签保持隐藏
+        // 未使用区段的线段与标签保持隐藏
         for (let j = segmentCount; j < this.MAX_MEASURE_SEGMENTS; j++) {
             const lineEntity = viewer.entities.getById('measure-segment-' + j);
             const labelEntity = viewer.entities.getById('measure-label-' + j);
@@ -765,7 +1553,7 @@ class App {
         if (resultEl) resultEl.textContent = '点击地图添加点';
     }
 
-    /** 统一更新面板显示、按钮 active，并按激活顺序从左下角排布（新激活在最下，前面的向上顶） */
+    /** 更新工具面板显示与按钮激活状态，按激活顺序自左下角排布 */
     updateToolPanelsDisplay() {
         document.getElementById('placeSearchBtn')?.classList.toggle('active', this.searchPanelOpen);
         document.getElementById('measureDistanceBtn')?.classList.toggle('active', this.measureMode);
@@ -798,7 +1586,7 @@ class App {
         }
     }
 
-    /** 测量与绘制互斥：测量、折线、矩形、圆只能同时激活一个 */
+    /** 测量与绘制互斥：同一时刻仅允许一种模式激活 */
     _exitAllDrawModes() {
         if (this.drawPolylineMode) { this.drawPolylineMode = false; this.clearDrawPolyline(); }
         if (this.drawRectMode) { this.drawRectMode = false; this.clearDrawRect(); }
@@ -1042,11 +1830,17 @@ class App {
         if (section) {
             section.classList.toggle('grid-disabled', !enabled);
         }
-        const ids = ['taskSelect', 'loadGridBtn', 'clearGridBtn', 'gridVisibility', 'editMode', 'gridOpacity'];
+        const ids = ['loadGridBtn', 'clearGridBtn', 'gridVisibility', 'editMode', 'preferenceDisplay', 'groupMembersDisplay', 'channelDisplay', 'taskAreaDisplay', 'gridOpacity'];
         ids.forEach(id => {
             const el = document.getElementById(id);
             if (el) el.disabled = !enabled;
         });
+        const list = document.getElementById('taskSelectList');
+        if (list) {
+            list.setAttribute('aria-disabled', !enabled);
+            list.querySelectorAll('.task-select-show').forEach(cb => { cb.disabled = !enabled; });
+            list.querySelectorAll('.task-select-row').forEach(row => { row.style.pointerEvents = enabled ? '' : 'none'; });
+        }
     }
     
     /**
@@ -1061,7 +1855,7 @@ class App {
     }
 }
 
-// 启动应用
+// 应用入口：DOM 就绪后实例化 App
 document.addEventListener('DOMContentLoaded', () => {
     window.app = new App();
 });

@@ -18,13 +18,11 @@ class PanelManager {
         // 左侧面板折叠
         this.leftToggle.addEventListener('click', () => {
             this.leftPanel.classList.toggle('collapsed');
-            this.leftToggle.textContent = this.leftPanel.classList.contains('collapsed') ? '▶' : '◀';
         });
         
         // 右侧面板折叠
         this.rightToggle.addEventListener('click', () => {
             this.rightPanel.classList.toggle('collapsed');
-            this.rightToggle.textContent = this.rightPanel.classList.contains('collapsed') ? '◀' : '▶';
         });
     }
     
@@ -47,7 +45,6 @@ class PanelManager {
      */
     expandLeftPanel() {
         this.leftPanel.classList.remove('collapsed');
-        this.leftToggle.textContent = '◀';
     }
     
     /**
@@ -55,6 +52,5 @@ class PanelManager {
      */
     expandRightPanel() {
         this.rightPanel.classList.remove('collapsed');
-        this.rightToggle.textContent = '▶';
     }
 }

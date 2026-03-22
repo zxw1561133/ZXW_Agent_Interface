@@ -22,22 +22,21 @@ class TileLoader {
      * 启动瓦片更新循环
      */
     startTileUpdateLoop() {
-        // 监听相机变化，延迟更新瓦片
+        // 相机变化时延迟触发瓦片更新
         let updateTimeout = null;
         
         const updateTiles = () => {
             if (updateTimeout) clearTimeout(updateTimeout);
             updateTimeout = setTimeout(() => {
                 this.updateVisibleTiles();
-            }, 500); // 500ms 延迟，避免频繁更新
+            }, 500); // 500ms 防抖，减少频繁更新
         };
         
-        // 如果 globe3d 有 controls，监听变化
+        // 若存在 controls 则监听其变化
         if (this.globe3d.controls) {
             this.globe3d.controls.addEventListener('change', updateTiles);
         }
         
-        // 初始加载
         setTimeout(() => this.updateVisibleTiles(), 1000);
     }
     
@@ -94,7 +93,7 @@ class TileLoader {
             
         } catch (error) {
             console.warn('Failed to load tile:', error);
-            // 失败时不更新纹理，保持当前显示
+            // 失败时保持当前纹理不变
         }
     }
     

@@ -1,0 +1,32 @@
+{
+  "task_area": {
+    "init": {
+        "longitude": 116.5747380,
+        "latitude": 35.05,
+        "altitude": 2000,
+        "length": 6,
+        "width": 6
+      },
+    "task1":{
+        "longitude": 116.70000000,
+        "latitude": 35.00000000,
+        "altitude": 2000,
+        "length": 6,
+        "width": 6
+      },
+      "task2":{
+        "longitude": 116.80000000,
+        "latitude": 35.00000000,
+        "altitude": 2000,
+        "length": 6,
+        "width": 6
+      },
+      "task3":{
+        "longitude": 116.90000000,
+        "latitude": 34.90000000,
+        "altitude": 2000,
+        "length": 10,
+        "width": 10
+      }
+  }
+}

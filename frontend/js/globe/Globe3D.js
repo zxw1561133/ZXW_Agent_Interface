@@ -6,10 +6,12 @@ class Globe3D {
     constructor(containerId) {
         this.containerId = containerId;
         this.viewer = null;
+        /** 视角模式：'top' 俯视（垂直向下），'oblique' 斜视（可见高度层次） */
+        this._viewMode = 'top';
         this.init();
     }
     
-    /** 无底图时使用的单色图（与场景背景一致），表示「未连接瓦片服务」 */
+    /** 无底图时使用的单色图（与场景背景一致），表示未连接瓦片服务 */
     static _getNoImageryProvider() {
         const dark = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKMIQQAAAABJRU5ErkJggg==';
         return new Cesium.SingleTileImageryProvider({
@@ -52,7 +54,7 @@ class Globe3D {
                         console.log('✅ 使用瓦片地址:', tileBase);
                         return provider;
                     }
-                } catch (e) { /* 继续尝试下一路径 */ }
+                } catch (e) { /* 尝试下一瓦片路径 */ }
             }
             console.warn('⚠️ 瓦片地址不可用:', tileBase, '；底图为空，请启动 map/server.py 或填写正确地址后点击「加载」');
             return Globe3D._getNoImageryProvider();
@@ -64,7 +66,7 @@ class Globe3D {
         console.log('🌍 Initializing Cesium Globe (local only)...');
         
         try {
-            // 默认优先用自己的瓦片，不可用时回退 NaturalEarthII
+            // 使用上述瓦片源，不可用时无底图
             const baseLayer = Cesium.ImageryLayer.fromProviderAsync(
                 Globe3D._getDefaultImageryProviderPromise()
             );
@@ -82,32 +84,47 @@ class Globe3D {
                 vrButton: false,
                 skyBox: false,
                 infoBox: false,
-                selectionIndicator: false,  // 关闭绿色选中框，网格操作通过右键菜单
+                selectionIndicator: false,  // 关闭默认选中框，网格操作通过右键菜单
                 creditContainer: document.createElement('div')
             });
             
-            // 取消双击「跟踪/飞到」行为，避免视角锁定感
+            // 禁用双击跟踪/飞到，避免视角被锁定
             if (this.viewer.screenSpaceEventHandler) {
                 this.viewer.screenSpaceEventHandler.removeInputAction(Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
             }
             
-            // 设置样式
-            this.viewer.scene.backgroundColor = Cesium.Color.fromCssColorString('#0a0e27');
+            // 场景样式：深空背景、大气与星空
+            this.viewer.scene.backgroundColor = Cesium.Color.fromCssColorString('#050814');
             this.viewer.scene.globe.enableLighting = true;
             this.viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString('#001133');
             this.viewer.scene.skyAtmosphere.show = true;
+            this._createStarfield();
             
-            // 初始视角
+            // 开放 Cesium 相机全部能力：缩放 1 ~ Infinity，旋转/倾斜/平移均启用
+            const controller = this.viewer.scene.screenSpaceCameraController;
+            controller.minimumZoomDistance = 1.0;
+            controller.maximumZoomDistance = Number.POSITIVE_INFINITY;
+            if (typeof controller.enableRotate !== 'undefined') controller.enableRotate = true;
+            if (typeof controller.enableTilt !== 'undefined') controller.enableTilt = true;
+            if (typeof controller.enableZoom !== 'undefined') controller.enableZoom = true;
+            if (typeof controller.enableTranslate !== 'undefined') controller.enableTranslate = true;
+            if (typeof controller.enableCollisionDetection !== 'undefined') controller.enableCollisionDetection = false;
+
+            const globeCfg = Config.GLOBE || {};
+            this._minCameraHeight = globeCfg.MIN_CAMERA_HEIGHT ?? 1;
+            this._maxCameraHeight = globeCfg.MAX_CAMERA_HEIGHT ?? 1.2e8;
+
+            // 初始视角（在配置范围内，仅用于 resetView / 缩放级别显示）
             this.viewer.camera.setView({
-                destination: Cesium.Cartesian3.fromDegrees(117.0, 39.0, 20000000)
+                destination: Cesium.Cartesian3.fromDegrees(117.0, 39.0, Math.min(20000000, this._maxCameraHeight))
             });
             
-            // 事件监听
+            // 缩放级别按实际计算值通过事件发出
             this.viewer.camera.changed.addEventListener(() => {
                 const height = this.viewer.camera.positionCartographic.height;
-                const zoom = Math.log2(20000000 / height);
+                const zoom = Math.log2(this._maxCameraHeight / height);
                 eventBus.emit('globe:zoom', { 
-                    zoom: Math.max(1, Math.min(10, zoom)), 
+                    zoom: zoom, 
                     distance: height 
                 });
             });
@@ -126,7 +143,7 @@ class Globe3D {
                 }
             }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
             
-            // 鼠标移动：右下角显示经纬度
+            // 鼠标移动时在右下角显示经纬度
             const coordsEl = document.getElementById('mouseCoords');
             handler.setInputAction((movement) => {
                 if (!coordsEl) return;
@@ -143,7 +160,7 @@ class Globe3D {
                 }
             }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
             
-            // 右键菜单由 App 在 mapContainer 的 contextmenu 中统一处理（scene.pick + ContextMenu.showAt）
+            // 右键菜单由 App 在 mapContainer 的 contextmenu 中统一处理
             
             console.log('✅ Cesium Globe initialized');
             
@@ -151,6 +168,50 @@ class Globe3D {
             console.error('❌ Cesium init failed:', error);
             alert('地球初始化失败: ' + error.message);
         }
+    }
+    
+    /**
+     * 创建星空：程序化星点，不依赖外部星图
+     */
+    _createStarfield() {
+        if (!this.viewer || !this.viewer.scene) return;
+        const scene = this.viewer.scene;
+        // 星空球半径大于最大视距，保证拉远时仍可见
+        const STAR_RADIUS = 1.5e8;
+        const STAR_COUNT = 6000;
+        const MIN_ZOOM = 5e5;
+        const MAX_ZOOM = 1.2e8;
+        const seed = 12345;
+        const rnd = (() => {
+            let s = seed;
+            return () => { s = (s * 9301 + 49297) % 233280; return s / 233280; };
+        })();
+        const starColors = [
+            [1.0, 1.0, 1.0, 1.0],
+            [0.9, 0.95, 1.0, 1.0],
+            [1.0, 0.98, 0.9, 1.0],
+            [0.85, 0.9, 1.0, 1.0],
+            [1.0, 1.0, 0.95, 1.0]
+        ];
+        const collection = scene.primitives.add(new Cesium.PointPrimitiveCollection());
+        for (let i = 0; i < STAR_COUNT; i++) {
+            const lat = Math.asin(2 * rnd() - 1);
+            const lon = 2 * Math.PI * rnd();
+            const x = STAR_RADIUS * Math.cos(lat) * Math.cos(lon);
+            const y = STAR_RADIUS * Math.cos(lat) * Math.sin(lon);
+            const z = STAR_RADIUS * Math.sin(lat);
+            const colorIdx = Math.floor(rnd() * starColors.length);
+            const [r, g, b, a] = starColors[colorIdx];
+            const brightness = 0.65 + 0.35 * rnd();
+            collection.add({
+                position: new Cesium.Cartesian3(x, y, z),
+                color: new Cesium.Color(r * brightness, g * brightness, b * brightness, a),
+                pixelSize: 2.0 + 2.5 * rnd(),
+                outlineColor: new Cesium.Color(0, 0, 0, 0),
+                scaleByDistance: new Cesium.NearFarScalar(MIN_ZOOM, 1.2, MAX_ZOOM * 1.8, 0.35)
+            });
+        }
+        this._starfieldCollection = collection;
     }
     
     /**
@@ -175,7 +236,7 @@ class Globe3D {
             minimumLevel: minLevel,
             maximumLevel: maxLevel
         });
-        // 仅当「连接被拒」等网络错误连续出现时才判为未连通，避免 404/缺瓦片或启动稍慢时误判
+        // 仅当连接类错误连续出现时判定为未连通，避免 404 或启动延迟导致误判
         const FAIL_THRESHOLD = 10;
         const GRACE_MS = 2500;
         let failCount = 0;
@@ -198,7 +259,7 @@ class Globe3D {
     }
     
     /**
-     * 清除底图，改为「无瓦片服务」状态（严格与地址栏一致：该地址不可用时不再显示旧图）
+     * 清除底图，切换为无瓦片服务状态（与当前地址栏一致，不保留旧图）
      */
     setImageryToNoService() {
         if (!this.viewer) return;
@@ -219,27 +280,100 @@ class Globe3D {
         });
     }
     
+    /**
+     * 按“级”缩放：delta 为级别变化量，+1 放大一级，-1 缩小一级。
+     * 级别与高度关系：height = maxH * 2^(-level)，与右下角 Zoom 显示一致。
+     */
     zoom(delta) {
         if (!this.viewer) return;
         const camera = this.viewer.camera;
-        const distance = camera.positionCartographic.height;
-        const newDistance = Math.max(100000, Math.min(50000000, distance - delta * 1000000));
+        const height = camera.positionCartographic.height;
+        const globeCfg = typeof Config !== 'undefined' && Config.GLOBE ? Config.GLOBE : {};
+        const minH = this._minCameraHeight ?? globeCfg.MIN_CAMERA_HEIGHT ?? 5e5;
+        const maxH = this._maxCameraHeight ?? globeCfg.MAX_CAMERA_HEIGHT ?? 1.2e8;
+        const maxLevel = Math.max(0, Math.floor(Math.log2(maxH / minH)));
+        const currentLevel = Math.round(Math.log2(maxH / height));
+        const newLevel = Math.max(0, Math.min(maxLevel, currentLevel + delta));
+        const newHeight = Math.max(minH, Math.min(maxH, maxH / Math.pow(2, newLevel)));
         const cartographic = camera.positionCartographic;
         camera.flyTo({
             destination: Cesium.Cartesian3.fromDegrees(
                 Cesium.Math.toDegrees(cartographic.longitude),
                 Cesium.Math.toDegrees(cartographic.latitude),
-                newDistance
+                newHeight
             ),
-            duration: 0.5
+            duration: 0.35
         });
     }
     
     resetView() {
         if (!this.viewer) return;
+        const maxH = this._maxCameraHeight ?? (typeof Config !== 'undefined' && Config.GLOBE ? Config.GLOBE.MAX_CAMERA_HEIGHT : undefined) ?? 1.2e8;
+        const height = Math.min(20000000, maxH);
         this.viewer.camera.setView({
-            destination: Cesium.Cartesian3.fromDegrees(117.0, 39.0, 20000000)
+            destination: Cesium.Cartesian3.fromDegrees(117.0, 39.0, height)
         });
+    }
+
+    /** 当前视角模式：'top' | 'oblique' */
+    getViewMode() {
+        return this._viewMode;
+    }
+
+    /**
+     * 获取当前视线中心点（屏幕中心与椭球交点），用于在任意缩放级别下围绕该点切换视角。与 Cesium 行为一致。
+     */
+    _getScreenCenterTarget() {
+        const scene = this.viewer.scene;
+        const canvas = scene.canvas;
+        const center = new Cesium.Cartesian2(canvas.clientWidth * 0.5, canvas.clientHeight * 0.5);
+        const ellipsoid = scene.globe.ellipsoid;
+        const target = scene.camera.pickEllipsoid(center, ellipsoid);
+        if (target != null) return target;
+        const carto = scene.camera.positionCartographic;
+        return Cesium.Cartesian3.fromRadians(carto.longitude, carto.latitude, 0);
+    }
+
+    /**
+     * 切换视角模式：以当前视线中心为目标、保持当前缩放距离，只改变俯仰角。使用 Cesium Camera.lookAt + setView 立即生效，任意缩放级别均可切换。
+     * @param {'top'|'oblique'} mode - 'top' 俯视（垂直向下）；'oblique' 斜视（有倾角，可看出网格高度）
+     * @param {Object} [options] - pitch（斜视俯仰角度数）, fly（true 时用 flyTo 动画，默认 false 立即 setView）
+     */
+    setViewMode(mode, options = {}) {
+        if (!this.viewer) return;
+        const camera = this.viewer.camera;
+        const controller = this.viewer.scene.screenSpaceCameraController;
+        const minDist = controller.minimumZoomDistance;
+        const maxDist = controller.maximumZoomDistance;
+
+        const target = this._getScreenCenterTarget();
+        let distance = Cesium.Cartesian3.distance(camera.position, target);
+        distance = Math.max(minDist, Math.min(maxDist, distance));
+
+        const fromPos = camera.position.clone();
+        const fromOrient = camera.orientation.clone();
+
+        if (mode === 'oblique') {
+            this._viewMode = 'oblique';
+            const pitchDeg = options.pitch != null ? options.pitch : -32;
+            const pitchRad = Cesium.Math.toRadians(pitchDeg);
+            camera.lookAt(target, new Cesium.HeadingPitchRange(0, pitchRad, distance));
+        } else {
+            this._viewMode = 'top';
+            camera.lookAt(target, new Cesium.HeadingPitchRange(0, -Math.PI / 2, distance));
+        }
+
+        const toPos = camera.position.clone();
+        const toOrient = camera.orientation.clone();
+        camera.position = fromPos;
+        camera.orientation = fromOrient;
+
+        if (options.fly) {
+            const duration = options.duration != null ? options.duration : 1.0;
+            camera.flyTo({ destination: toPos, orientation: toOrient, duration });
+        } else {
+            camera.setView({ destination: toPos, orientation: toOrient });
+        }
     }
     
     getCameraPosition() {

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Earth Platform</title>
+    <title>DA智能体系统</title>
     <link rel="icon" href="images/icons/icon-globe.svg" type="image/svg+xml">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -17,9 +17,67 @@
 <body>
     <!-- 主容器 -->
     <div id="app">
-        <!-- 顶部栏 -->
+        <!-- 顶部栏： Logo + 菜单栏 + 状态 -->
         <header class="top-bar">
-            <div class="logo"><img src="images/icons/icon-globe.svg" alt="3D Earth Platform logo" class="logo-icon" width="24" height="24"> 3D Earth Platform</div>
+            <div class="top-bar-left">
+                <div class="logo">
+                    <img src="images/icons/icon-globe.svg" alt="" class="logo-icon" width="28" height="28">
+                    <span class="logo-text">DA智能体系统</span>
+                </div>
+                <nav class="app-menu" id="appMenu" aria-label="主菜单">
+                    <div class="menu-item-wrap" data-menu="file">
+                        <button type="button" class="menu-trigger" aria-haspopup="true" aria-expanded="false">文件</button>
+                        <div class="menu-dropdown" role="menu">
+                            <div class="menu-dropdown-item" data-action="reload-map" role="menuitem">重新加载地图</div>
+                            <div class="menu-dropdown-item" data-action="export-config" role="menuitem">导出配置</div>
+                            <div class="menu-divider"></div>
+                            <div class="menu-dropdown-item" data-action="exit" role="menuitem">退出</div>
+                        </div>
+                    </div>
+                    <div class="menu-item-wrap" data-menu="edit">
+                        <button type="button" class="menu-trigger" aria-haspopup="true" aria-expanded="false">编辑</button>
+                        <div class="menu-dropdown" role="menu">
+                            <div class="menu-dropdown-item" data-action="clear-grids" role="menuitem">清除所有网格</div>
+                            <div class="menu-dropdown-item" data-action="deselect-all" role="menuitem">取消全部选中</div>
+                        </div>
+                    </div>
+                    <div class="menu-item-wrap" data-menu="view">
+                        <button type="button" class="menu-trigger" aria-haspopup="true" aria-expanded="false">视图</button>
+                        <div class="menu-dropdown" role="menu">
+                            <div class="menu-dropdown-item" data-action="view-left-panel" role="menuitem">左侧面板</div>
+                            <div class="menu-dropdown-item" data-action="view-right-panel" role="menuitem">右侧面板 (Agent)</div>
+                            <div class="menu-divider"></div>
+                            <div class="menu-dropdown-item" data-action="view-reset" role="menuitem">重置视角</div>
+                        </div>
+                    </div>
+                    <div class="menu-item-wrap" data-menu="map">
+                        <button type="button" class="menu-trigger" aria-haspopup="true" aria-expanded="false">地图</button>
+                        <div class="menu-dropdown" role="menu">
+                            <div class="menu-dropdown-item" data-action="map-load" role="menuitem">加载地图</div>
+                            <div class="menu-dropdown-item" data-action="map-zoom-in" role="menuitem">放大</div>
+                            <div class="menu-dropdown-item" data-action="map-zoom-out" role="menuitem">缩小</div>
+                        </div>
+                    </div>
+                    <div class="menu-item-wrap" data-menu="tools">
+                        <button type="button" class="menu-trigger" aria-haspopup="true" aria-expanded="false">工具</button>
+                        <div class="menu-dropdown" role="menu">
+                            <div class="menu-dropdown-item" data-action="tool-search" role="menuitem">地点搜索</div>
+                            <div class="menu-dropdown-item" data-action="tool-measure" role="menuitem">测量距离</div>
+                            <div class="menu-divider"></div>
+                            <div class="menu-dropdown-item" data-action="tool-polyline" role="menuitem">折线绘制</div>
+                            <div class="menu-dropdown-item" data-action="tool-rect" role="menuitem">矩形绘制</div>
+                            <div class="menu-dropdown-item" data-action="tool-circle" role="menuitem">圆形绘制</div>
+                        </div>
+                    </div>
+                    <div class="menu-item-wrap" data-menu="help">
+                        <button type="button" class="menu-trigger" aria-haspopup="true" aria-expanded="false">帮助</button>
+                        <div class="menu-dropdown" role="menu">
+                            <div class="menu-dropdown-item" data-action="help-about" role="menuitem">关于</div>
+                            <div class="menu-dropdown-item" data-action="help-docs" role="menuitem">使用说明</div>
+                        </div>
+                    </div>
+                </nav>
+            </div>
             <div class="status-bar">
                 <span id="zoomLevel">Zoom: 1x</span>
                 <span id="gridCount">Grids: 0</span>
@@ -35,15 +93,41 @@
                     <h3><img src="images/icons/icon-map.svg" alt="" class="panel-section-icon" width="20" height="20" aria-hidden="true"> 地图控制</h3>
                     <div class="control-group">
                         <div class="tile-source-label-row">
-                            <label>瓦片源</label>
+                            <label>卫星源</label>
                             <div id="tileSourceStatus" class="tile-source-status" aria-live="polite">
                                 <span id="tileSourceStatusText"></span>
                             </div>
                         </div>
                         <div class="input-group">
-                            <label for="tileServerUrl" class="sr-only">瓦片服务地址</label>
+                            <label for="tileServerUrl" class="sr-only">卫星图瓦片服务地址</label>
                             <input type="text" id="tileServerUrl" placeholder="瓦片服务地址（由配置加载）" aria-describedby="tileSourceStatusText">
                             <button id="loadServerMapBtn" class="btn-primary">加载</button>
+                        </div>
+                    </div>
+                    <div class="control-group">
+                        <div class="tile-source-label-row">
+                            <label>路网源</label>
+                            <div id="roadTileSourceStatus" class="tile-source-status" aria-live="polite">
+                                <span id="roadTileSourceStatusText"></span>
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <label for="roadTileServerUrl" class="sr-only">路网图瓦片服务地址</label>
+                            <input type="text" id="roadTileServerUrl" placeholder="路网图瓦片服务地址">
+                            <button id="loadRoadMapBtn" class="btn-primary">加载</button>
+                        </div>
+                    </div>
+                    <div class="control-group">
+                        <div class="tile-source-label-row">
+                            <label>高程源</label>
+                            <div id="elevationSourceStatus" class="tile-source-status" aria-live="polite">
+                                <span id="elevationSourceStatusText"></span>
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <label for="elevationSourceUrl" class="sr-only">高程数据源地址</label>
+                            <input type="text" id="elevationSourceUrl" placeholder="高程数据源地址">
+                            <button id="loadElevationBtn" class="btn-primary">加载</button>
                         </div>
                     </div>
                 </div>
@@ -51,15 +135,14 @@
                 <div class="panel-section" id="gridControlSection" data-disabled-hint="请先加载地图后再使用网格">
                     <h3><img src="images/icons/icon-grid.svg" alt="" class="panel-section-icon" width="20" height="20" aria-hidden="true"> 网格控制</h3>
                     <div class="control-group">
-                        <label for="taskSelect">选择任务</label>
-                        <select id="taskSelect" multiple aria-describedby="taskSelectHint">
-                            <option value="initGrid">初始网格</option>
-                            <option value="task1Grid">任务 1</option>
-                            <option value="task2Grid">任务 2</option>
-                            <option value="task3Grid">任务 3</option>
-                            <option value="groups">分组网格</option>
-                        </select>
-                        <span id="taskSelectHint" class="sr-only">可多选</span>
+                        <label id="taskSelectLabel">选择任务</label>
+                        <div id="taskSelectList" class="task-select-list" role="listbox" aria-labelledby="taskSelectLabel" aria-describedby="taskSelectHint">
+                            <div class="task-select-row selected" data-task-type="initGrid" role="option" aria-selected="true"><span class="task-select-label">初始网格</span><input type="checkbox" class="task-select-show" checked aria-label="显示该网格"></div>
+                            <div class="task-select-row selected" data-task-type="task1Grid" role="option" aria-selected="true"><span class="task-select-label">任务 1</span><input type="checkbox" class="task-select-show" checked aria-label="显示该网格"></div>
+                            <div class="task-select-row" data-task-type="task2Grid" role="option" aria-selected="false"><span class="task-select-label">任务 2</span><input type="checkbox" class="task-select-show" checked aria-label="显示该网格"></div>
+                            <div class="task-select-row" data-task-type="task3Grid" role="option" aria-selected="false"><span class="task-select-label">任务 3</span><input type="checkbox" class="task-select-show" checked aria-label="显示该网格"></div>
+                        </div>
+                        <span id="taskSelectHint" class="sr-only">可多选，右侧复选框控制该类型是否在地图上显示</span>
                     </div>
                     
                     <div class="control-group button-row">
@@ -79,6 +162,36 @@
                             <label for="editMode">网格编辑开关</label>
                             <label class="switch">
                                 <input type="checkbox" id="editMode" checked aria-label="开启后，在地图上右击网格可弹出选中/取消等菜单" title="开启后，在地图上右击网格可弹出选中/取消等菜单">
+                                <span class="slider"></span>
+                            </label>
+                        </span>
+                        <span class="switch-item">
+                            <label for="preferenceDisplay">偏好显示</label>
+                            <label class="switch">
+                                <input type="checkbox" id="preferenceDisplay" checked aria-label="显示任务3偏好图例与地图上的偏好着色" title="开启后显示任务3偏好图例，且地图上按偏好组着色；关闭后图例隐藏、task3 网格统一颜色">
+                                <span class="slider"></span>
+                            </label>
+                        </span>
+                        <span class="switch-item">
+                            <label for="groupMembersDisplay">显示分组情况</label>
+                            <label class="switch">
+                                <input type="checkbox" id="groupMembersDisplay" aria-label="显示各组成员（members）" title="开启后弹出分组情况，显示各组包含的编号">
+                                <span class="slider"></span>
+                            </label>
+                        </span>
+                    </div>
+                    <div class="control-group control-group-row">
+                        <span class="switch-item">
+                            <label for="channelDisplay">通道显示</label>
+                            <label class="switch">
+                                <input type="checkbox" id="channelDisplay" checked aria-label="切换通道立方体显示" title="开启后显示任务通道立方体；关闭后隐藏通道">
+                                <span class="slider"></span>
+                            </label>
+                        </span>
+                        <span class="switch-item">
+                            <label for="taskAreaDisplay">任务区域显示</label>
+                            <label class="switch">
+                                <input type="checkbox" id="taskAreaDisplay" checked aria-label="切换任务区域矩形显示" title="开启后显示各任务区域矩形；关闭后隐藏任务区域">
                                 <span class="slider"></span>
                             </label>
                         </span>
@@ -109,7 +222,7 @@
                 </div>
 
                 <!-- 折叠按钮 -->
-                <button class="panel-toggle left" id="leftPanelToggle" aria-label="折叠或展开左侧面板"><span aria-hidden="true">◀</span></button>
+                <button class="panel-toggle left" id="leftPanelToggle" aria-label="折叠或展开左侧面板"></button>
             </aside>
 
             <!-- 中央地图区 -->
@@ -188,6 +301,11 @@
                 </div>
                 <!-- 经纬度：独立于工具容器，固定右下角 -->
                 <div id="mouseCoords" class="mouse-coords" aria-live="polite"></div>
+                <!-- 任务3 偏好图例：地图右上角紧挨右侧面板，竖排便于扩展 -->
+                <div id="task3PreferenceLegendWrap" class="preference-legend-map" style="display: none;" aria-label="任务3 偏好图例">
+                    <span class="preference-legend-title">任务3 偏好</span>
+                    <div id="task3PreferenceLegend" class="preference-legend"></div>
+                </div>
             </main>
 
             <!-- 右侧面板 - Agent 聊天 -->
@@ -216,7 +334,7 @@
                 </div>
                 
                 <!-- 折叠按钮 -->
-                <button class="panel-toggle right" id="rightPanelToggle" aria-label="折叠或展开右侧面板"><span aria-hidden="true">▶</span></button>
+                <button class="panel-toggle right" id="rightPanelToggle" aria-label="折叠或展开右侧面板"></button>
             </aside>
         </div>
     </div>
@@ -232,13 +350,18 @@
             <div id="contextMenuPickerList"></div>
         </div>
         <div id="contextMenuActions" class="context-menu-actions">
-            <div class="context-item" data-action="select" role="menuitem">选中该网格</div>
-            <div class="context-item" data-action="selectAll" role="menuitem">选中该阶段全部网格</div>
-            <div class="context-item" data-action="deselect" role="menuitem">取消选中该网格</div>
-            <div class="context-item" data-action="deselectStage" role="menuitem">取消该阶段选中</div>
-            <div class="context-item" data-action="deselectAll" role="menuitem">取消所有选中</div>
-            <div class="context-divider"></div>
-            <div class="context-item" data-action="details" role="menuitem">查看详情</div>
+            <!-- 网格项（有 currentGrid 时显示） -->
+            <div class="context-item context-item-grid" data-action="select" role="menuitem">选中该网格</div>
+            <div class="context-item context-item-grid" data-action="selectAll" role="menuitem">选中该阶段全部网格</div>
+            <div class="context-item context-item-grid" data-action="deselect" role="menuitem">取消选中该网格</div>
+            <div class="context-item context-item-grid" data-action="deselectStage" role="menuitem">取消该阶段选中</div>
+            <div class="context-item context-item-grid" data-action="deselectAll" role="menuitem">取消所有选中</div>
+            <div class="context-divider context-item-grid"></div>
+            <div class="context-item context-item-grid" data-action="details" role="menuitem">查看详情</div>
+            <!-- 任务区域项（有 currentTaskArea 时显示；已选中时显示“取消选中”，未选中时显示“选中”） -->
+            <div class="context-item context-item-taskarea" data-action="taskAreaSelect" role="menuitem" style="display: none;">选中该任务区域</div>
+            <div class="context-item context-item-taskarea" data-action="taskAreaDeselect" role="menuitem" style="display: none;">取消该任务区域的选中</div>
+            <div class="context-item context-item-taskarea" data-action="taskAreaDetails" role="menuitem" style="display: none;">查看详情</div>
         </div>
     </div>
 
@@ -262,5 +385,13 @@
     <script src="js/ui/PanelManager.js"></script>
     <script src="js/ui/ContextMenu.js"></script>
     <script src="js/app.js"></script>
+    <div id="groupMembersModal" class="group-members-modal" role="dialog" aria-labelledby="groupMembersModalTitle" aria-modal="true" hidden>
+        <div class="group-members-modal-backdrop"></div>
+        <div class="group-members-modal-content">
+            <h3 id="groupMembersModalTitle" class="group-members-modal-title">分组情况（members）</h3>
+            <div id="groupMembersModalBody" class="group-members-modal-body"></div>
+            <button type="button" class="btn-secondary group-members-modal-close">关闭</button>
+        </div>
+    </div>
 </body>
 </html>

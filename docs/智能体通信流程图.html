@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DA智能体系统 - 通信流程图</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+      background: #f8fafc;
+      padding: 24px;
+      margin: 0;
+    }
+    .title {
+      text-align: center;
+      font-size: 18px;
+      margin-bottom: 20px;
+      color: #1e293b;
+    }
+    .flow {
+      max-width: 380px;
+      margin: 0 auto;
+    }
+    .box {
+      border: 2px solid #2563eb;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin: 0 auto 0;
+      text-align: center;
+      background: #fff;
+      font-size: 14px;
+      line-height: 1.45;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .box.start-end {
+      border-radius: 24px;
+      background: #dbeafe;
+      border-color: #1d4ed8;
+      font-weight: 500;
+    }
+    .box.decision {
+      border-color: #ca8a04;
+      background: #fef9c3;
+      shape-outside: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+    }
+    .box.backend {
+      border-color: #059669;
+      background: #ecfdf5;
+    }
+    .arrow {
+      text-align: center;
+      color: #64748b;
+      font-size: 20px;
+      margin: 2px 0;
+      line-height: 1;
+    }
+    .branch {
+      display: flex;
+      justify-content: center;
+      gap: 24px;
+      margin: 8px 0 16px;
+      flex-wrap: wrap;
+    }
+    .branch-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-width: 160px;
+    }
+    .branch-col .label {
+      font-size: 12px;
+      color: #64748b;
+      margin-bottom: 4px;
+    }
+    .branch-col .box { margin-bottom: 0; }
+    .branch-col .arrow { margin: 2px 0; }
+    .note {
+      text-align: center;
+      margin-top: 20px;
+      font-size: 12px;
+      color: #64748b;
+    }
+  </style>
+</head>
+<body>
+  <p class="title"><strong>DA智能体系统 · 通信流程图</strong></p>
+  <div class="flow">
+    <div class="box start-end">① 开始 · 用户</div>
+    <div class="arrow">↓</div>
+    <div class="box">② 打开页面 / 点「加载网格」/ 说「是」</div>
+    <div class="arrow">↓</div>
+    <div class="box">③ App 或 智能体</div>
+    <div class="arrow">↓</div>
+    <div class="box">④ ApiService 请求后端</div>
+    <div class="arrow">↓</div>
+    <div class="box backend">⑤ 后端 :9000 返回 JSON</div>
+    <div class="arrow">↓</div>
+    <div class="box">⑥ 得到 Config 或 allGridData</div>
+    <div class="arrow">↓</div>
+    <div class="box decision">⑦ 是网格数据？</div>
+    <div class="arrow">↓</div>
+
+    <div class="branch">
+      <div class="branch-col">
+        <span class="label">否 →</span>
+        <div class="box">更新状态 / 界面</div>
+        <div class="arrow">↓</div>
+        <div class="box start-end">结束</div>
+      </div>
+      <div class="branch-col">
+        <span class="label">是 →</span>
+        <div class="box">emit grid:load</div>
+        <div class="arrow">↓</div>
+        <div class="box">App → GridSystem 画网格</div>
+        <div class="arrow">↓</div>
+        <div class="box">emit importComplete</div>
+        <div class="arrow">↓</div>
+        <div class="box">同步任务框、聊天提示</div>
+        <div class="arrow">↓</div>
+        <div class="box start-end">结束</div>
+      </div>
+    </div>
+  </div>
+  <p class="note">方框为步骤；圆角框为开始/结束；菱形为判断；绿框为后端。</p>
+</body>
+</html>

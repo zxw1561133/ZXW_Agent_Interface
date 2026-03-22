@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DA智能体 - 详细通信流程图（谁请求谁、谁返回什么）</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: "Microsoft YaHei", "PingFang SC", sans-serif; background: #f1f5f9; padding: 16px; margin: 0; font-size: 13px; }
+    h1 { text-align: center; font-size: 16px; margin-bottom: 4px; color: #0f172a; }
+    .sub { text-align: center; font-size: 12px; color: #64748b; margin-bottom: 16px; }
+    .section { margin-bottom: 20px; }
+    .section-title { font-weight: bold; color: #1e40af; margin-bottom: 8px; padding: 4px 0; border-bottom: 2px solid #93c5fd; }
+    .step {
+      border: 2px solid #334155;
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+      background: #fff;
+      display: grid;
+      grid-template-columns: 1fr auto 1fr auto 1fr;
+      gap: 8px;
+      align-items: center;
+    }
+    .step .who { font-weight: 600; color: #0f172a; background: #e2e8f0; padding: 4px 8px; border-radius: 4px; }
+    .step .arrow { text-align: center; color: #475569; font-size: 12px; }
+    .step .target { color: #1e293b; background: #f8fafc; padding: 4px 8px; border-radius: 4px; }
+    .step .return { color: #059669; font-size: 12px; padding: 4px 8px; background: #ecfdf5; border-radius: 4px; }
+    .step.backend .target { background: #d1fae5; }
+    .step.event .target { background: #fef3c7; }
+    .step .return-label { font-size: 11px; color: #64748b; }
+    @media (max-width: 700px) {
+      .step { grid-template-columns: 1fr; }
+      .step .arrow { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <h1>DA智能体系统 · 详细通信流程图</h1>
+  <p class="sub">谁（函数/模块）请求了谁 → 谁返回了什么</p>
+
+  <div class="section">
+    <div class="section-title">一、页面加载（App.init）</div>
+
+    <div class="step">
+      <span class="who">App.init()</span>
+      <span class="arrow">→ fetch →</span>
+      <span class="target">GET {apiBase}/config.json</span>
+      <span class="return-label">← 返回</span>
+      <span class="return">后端读 config.json → JSON { tile_server_public, tiles_dir, api_server } → 前端写入 Config</span>
+    </div>
+    <div class="step">
+      <span class="who">App.init()</span>
+      <span class="arrow">→ fetch →</span>
+      <span class="target">GET {apiBase}/api/config</span>
+      <span class="return-label">← 返回</span>
+      <span class="return">（config.json 失败时）后端 handle_config() → { tileServer, localTilesPath, apiServer }</span>
+    </div>
+    <div class="step">
+      <span class="who">App.init()</span>
+      <span class="arrow">→ new →</span>
+      <span class="target">Globe3D('globe3d') / GridSystem(globe3d) / ChatAgent() / PanelManager() / ContextMenu(gridSystem)</span>
+      <span class="return-label">← 返回</span>
+      <span class="return">实例，无返回值；App 持有引用</span>
+    </div>
+    <div class="step event">
+      <span class="who">App.setupEventListeners()</span>
+      <span class="arrow">→ 订阅 →</span>
+      <span class="target">eventBus.on('grid:load', callback) / on('grid:importComplete') / on('globe:zoom') / on('globe:click')</span>
+      <span class="return-label">← 返回</span>
+      <span class="return">无；之后 emit 时 callback 被调用</span>
+    </div>
+    <div class="step">
+      <span class="who">App.init()</span>
+      <span class="arrow">→ 调用 →</span>
+      <span class="target">this.loadServerMap(true)</span>
+      <span class="return-label">← 返回</span>
+      <span class="return">内部 fetch 瓦片地址 HEAD/GET → 成功则 globe3d.setImageryFromTileServer(base)，失败则 setImageryToNoService()</span>
+    </div>
+    <div class="step">
+      <span class="who">App.init()</span>
+      <span class="arrow">→ 调用 →</span>
+      <span class="target">apiService.healthCheck()</span>
+      <span class="return-label">← 返回</span>
+      <span class="return">ApiService 内部 fetch GET /api/health → 后端 handle_health() → { status: 'ok', message, version } → App 根据 status 更新状态栏</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">二、点击「加载网格」（App.loadSelectedGrids）</div>
+
+    <div class="step">
+      <span class="who">App.loadSelectedGrids()</span>
+      <span class="arrow">→ 调用 →</span>
+      <span class="target">apiService.getGridDataLikeDA()</span>
+      <span class="return-label">← 返回</span>
+      <span class="return">见下方 ApiService 内部步骤，最终返回 allGridData</span>
+    </div>
+    <div class="step backend">
+      <span class="who">ApiService.getGridDataLikeDA()</span>
+      <span class="arrow">→ 内部 4 次 getGridData →</span>
+      <span class="target">fetch GET /api/grid/data?task=task1、task2、task3、group</span>
+      <span class="return-label">← 返回</span>
+      <span class="return">后端 handle_grid_data() 读 Test_grid_task1.json 等 → 4 份 JSON → ApiService 组装为 { initGrid, task1Grid, task2Grid, task3Grid, groups }</span>
+    </div>
+    <div class="step event">
+      <span class="who">App.loadSelectedGrids()</span>
+      <span class="arrow">→ 发布 →</span>
+      <span class="target">eventBus.emit('grid:load', { data: allGridData, taskType })</span>
+      <span class="return-label">← 触发</span>
+      <span class="return">EventBus 调用已订阅的 callback，传入 { data, taskType }</span>
+    </div>
+    <div class="step">
+      <span class="who">App 的 grid:load 回调</span>
+      <span class="arrow">→ 调用 →</span>
+      <span class="target">this.gridSystem.loadGridData(data, taskType)</span>
+      <span class="return-label">← 返回</span>
+      <span class="return">无；GridSystem 内部取 data[taskType] 数组，逐条 createGridEntity(grid, taskType) 画到 Cesium</span>
+    </div>
+    <div class="step">
+      <span class="who">GridSystem.loadGridData(data, taskType)</span>
+      <span class="arrow">→ 内部循环 →</span>
+      <span class="target">this.createGridEntity(grid, taskType)</span>
+      <span class="return-label">← 返回</span>
+      <span class="return">无；viewer.entities.add(polygon + label)，网格显示在地球上</span>
+    </div>
+    <div class="step">
+      <span class="who">App.loadSelectedGrids()</span>
+      <span class="arrow">→ 调用 →</span>
+      <span class="target">this.chatAgent.sendSystemMessage('✅ 已加载 N 类网格数据')</span>
+      <span class="return-label">← 返回</span>
+      <span class="return">ChatAgent.addMessage(内容, 'agent') → 聊天框追加一条消息</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">三、对话里说「是」导入（ChatAgent）</div>
+
+    <div class="step">
+      <span class="who">用户</span>
+      <span class="arrow">→ 输入「是」发送 →</span>
+      <span class="target">ChatAgent.sendMessage()</span>
+      <span class="return-label">←</span>
+      <span class="return">addMessage(内容,'user') 显示；因 pendingImport 为 true 走 handleImportResponse(content)</span>
+    </div>
+    <div class="step">
+      <span class="who">ChatAgent.handleImportResponse('是')</span>
+      <span class="arrow">→ 调用 →</span>
+      <span class="target">this.performImport()</span>
+      <span class="return-label">← 返回</span>
+      <span class="return">无（async）；内部拉网格、发事件、发聊天消息</span>
+    </div>
+    <div class="step">
+      <span class="who">ChatAgent.performImport()</span>
+      <span class="arrow">→ 调用 →</span>
+      <span class="target">apiService.getGridDataLikeDA()</span>
+      <span class="return-label">← 返回</span>
+      <span class="return">同「二」：4 次 GET /api/grid/data → 后端返回 4 份 JSON → 组装 allGridData 返回</span>
+    </div>
+    <div class="step event">
+      <span class="who">ChatAgent.performImport()</span>
+      <span class="arrow">→ 发布 →</span>
+      <span class="target">eventBus.emit('grid:load', { data: allGridData, taskType })</span>
+      <span class="return-label">← 触发</span>
+      <span class="return">App 的 grid:load 回调被调用 → gridSystem.loadGridData(data, taskType) → 网格画到地球</span>
+    </div>
+    <div class="step event">
+      <span class="who">ChatAgent.performImport()</span>
+      <span class="arrow">→ 发布 →</span>
+      <span class="target">eventBus.emit('grid:importComplete', { tasks: loaded })</span>
+      <span class="return-label">← 触发</span>
+      <span class="return">App 的 grid:importComplete 回调 → 把任务选择框选中项设为 tasks</span>
+    </div>
+    <div class="step">
+      <span class="who">ChatAgent.performImport()</span>
+      <span class="arrow">→ 调用 →</span>
+      <span class="target">this.addMessage('✅ 导入完成！...', 'agent')</span>
+      <span class="return-label">← 返回</span>
+      <span class="return">聊天框追加一条 Agent 消息</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">四、后端 API（谁处理、返回什么）</div>
+
+    <div class="step backend">
+      <span class="who">浏览器 fetch</span>
+      <span class="arrow">→ GET →</span>
+      <span class="target">/config.json</span>
+      <span class="return-label">← 后端</span>
+      <span class="return">APIHandler.handle_config_file() 读 config.json → 返回 JSON（过滤 _ 开头键）</span>
+    </div>
+    <div class="step backend">
+      <span class="who">浏览器 fetch</span>
+      <span class="arrow">→ GET →</span>
+      <span class="target">/api/config</span>
+      <span class="return-label">← 后端</span>
+      <span class="return">handle_config() → { tileServer, localTilesPath, apiServer }</span>
+    </div>
+    <div class="step backend">
+      <span class="who">ApiService.healthCheck() → fetch</span>
+      <span class="arrow">→ GET →</span>
+      <span class="target">/api/health</span>
+      <span class="return-label">← 后端</span>
+      <span class="return">handle_health() → { status: 'ok', message: 'Service is running', version: '1.0.0' }</span>
+    </div>
+    <div class="step backend">
+      <span class="who">ApiService.getGridData(task) → fetch</span>
+      <span class="arrow">→ GET →</span>
+      <span class="target">/api/grid/data?task=task1（或 task2/task3/group）</span>
+      <span class="return-label">← 后端</span>
+      <span class="return">handle_grid_data(params) 读 grid/Test_grid_task1.json 等 → 返回文件原始 JSON（如 { initGrid, task1Grid }）</span>
+    </div>
+  </div>
+
+  <p style="text-align:center; margin-top:20px; font-size:11px; color:#64748b;">文件：docs/智能体通信流程图-详细.html · 与 app.js、ChatAgent.js、ApiService.js、backend/server.py 对应</p>
+</body>
+</html>

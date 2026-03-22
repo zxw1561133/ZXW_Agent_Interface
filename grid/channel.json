@@ -1,0 +1,38 @@
+{
+  "channel": {
+    "cubeList": [
+      {
+        "center_jd": 116.574738,
+        "center_wd": 35.05,
+        "center_gc": 2000,
+        "length": 25,
+        "width": 25,
+        "height": 120
+      },
+      {
+        "center_jd": 116.7,
+        "center_wd": 35.0,
+        "center_gc": 2000,
+        "length": 15,
+        "width": 15,
+        "height": 120
+      },
+      {
+        "center_jd": 116.8,
+        "center_wd": 35.0,
+        "center_gc": 2000,
+        "length": 15,
+        "width": 15,
+        "height": 120
+      },
+      {
+        "center_jd": 116.9,
+        "center_wd": 34.9,
+        "center_gc": 2000,
+        "length": 25,
+        "width": 25,
+        "height": 120
+      }
+    ]
+  }
+}

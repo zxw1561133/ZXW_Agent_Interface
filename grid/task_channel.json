@@ -1,0 +1,22 @@
+{
+  "channel": {
+    "cubeList": [
+      {
+        "center_jd": 116.574738,
+        "center_wd": 35.05,
+        "center_gc": 2000,
+        "length": 25,
+        "width": 25,
+        "height": 1000
+      },
+      {
+        "center_jd": 116.574738,
+        "center_wd": 34.933755,
+        "center_gc": 2000,
+        "length": 25,
+        "width": 25,
+        "height": 1000
+      }
+    ]
+  }
+}
